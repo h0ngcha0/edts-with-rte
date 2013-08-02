@@ -64,21 +64,12 @@ malformed_request(ReqData, Ctx) ->
   edts_resource_lib:validate(ReqData, Ctx, [nodename, module, exported]).
 
 resource_exists(ReqData, Ctx) ->
-  case edts_resource_lib:exists_p(ReqData, Ctx, [nodename]) of
-    false -> {false, ReqData, Ctx};
-    true ->
-      Nodename = orddict:fetch(nodename, Ctx),
-      Module = orddict:fetch(module, Ctx),
-      case edts:get_module_info(Nodename, Module, detailed) of
-        {error, not_found} -> {false, ReqData, Ctx};
-        Info               ->
-          {true,  ReqData, orddict:store(info, Info, Ctx)}
-      end
-  end.
+  MFArgKeys = {edts_code, get_module_info, [module]},
+  edts_resource_lib:check_exists_and_do_rpc(ReqData, Ctx, [], MFArgKeys).
 
 to_json(ReqData, Ctx) ->
   Exported = orddict:fetch(exported, Ctx),
-  Info     = orddict:fetch(info, Ctx),
+  Info     = orddict:fetch(result, Ctx),
   {functions, Functions} = lists:keyfind(functions, 1, Info),
   Data = format(Exported, Functions),
   {mochijson2:encode(Data), ReqData, Ctx}.

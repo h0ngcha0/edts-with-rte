@@ -39,8 +39,8 @@
          compile_and_load/1,
          free_vars/1,
          free_vars/2,
+         get_function_abscode/3,
          get_function_info/3,
-         get_module_info/1,
          get_module_info/2,
          get_module_source/1,
          modules/0,
@@ -172,6 +172,27 @@ compile_and_load(File0, Opts) ->
       {error, {format_errors(error, Errors), format_errors(warning, Warnings)}}
   end.
 
+%% @doc Try to get the abstract code of a function body
+-spec get_function_abscode(M :: module(), F :: function(), A :: integer()) ->
+                           {ok, string()} | {error, any()}.
+get_function_abscode(M, F, A) ->
+  ensure_module_loaded(true, M),
+  {M, Bin, _File}                   = code:get_object_code(M),
+  {ok, {M, Chunks}}                 = beam_lib:chunks(Bin, [abstract_code]),
+  {abstract_code, {_Vsn, Abstract}} = lists:keyfind(abstract_code, 1, Chunks),
+  get_abscode(M, F, A, Abstract).
+
+%% @doc get the string reprentation of a function body
+%%      TODO: what's the type of AbstractCode?
+-spec get_abscode( M :: module(), F :: function(), A :: integer()
+                 , AbstractCode :: any()) ->
+                      {ok, tuple()} | {error, any()}.
+get_abscode(_M, F, A, [{function, _L, F, A, _C} = Fun|_T]) ->
+  {ok, Fun};
+get_abscode(M, F, A, [_H|T])                               ->
+  get_abscode(M, F, A, T);
+get_abscode(_M, _F, _A, [])                                ->
+  {error, not_found}.
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -304,15 +325,6 @@ parse_expressions(String) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Equivalent to get_module_info(M, detailed).
-%% @end
--spec get_module_info(M::module()) -> [{atom, term()}].
-%%------------------------------------------------------------------------------
-get_module_info(M) ->
-  get_module_info(M, detailed).
-
-%%------------------------------------------------------------------------------
-%% @doc
 %% Returns information on M.
 %% @end
 -spec get_module_info(M::module(), Level::basic | detailed) -> [{atom, term()}].
@@ -378,7 +390,7 @@ pop_dirs(Source0, Rel) ->
 modules() ->
   Beams = lists:append([modules_at_path(Path) || Path <- code:get_path()]),
   Binaries = [Module || {Module, _} <- code:all_loaded()],
-  {ok, lists:usort(Binaries ++ Beams)}.
+  lists:usort(Binaries ++ Beams).
 
 modules_at_path(Path) ->
   Beams = filelib:wildcard(filename:join(Path, "*.beam")),
@@ -389,7 +401,7 @@ modules_at_path(Path) ->
 %% @doc
 %% Starts the edts xref-server on the local node.
 %% @end
--spec start() -> {node(), ok} | {error, already_started}.
+-spec start() -> ok.
 %%------------------------------------------------------------------------------
 start() ->
   case edts_xref:started_p() of
@@ -1132,7 +1144,7 @@ parse_abstract_other_test_() ->
   [?_assertEqual(bar, parse_abstract(foo, bar))].
 
 modules_test_() ->
-  [?_assertMatch({ok, [_|_]}, modules())].
+  [?_assertMatch([_|_], modules())].
 
 get_compile_outdir_test_() ->
   Good = "good/../ebin",
@@ -1168,4 +1180,3 @@ test_file_forms(File) ->
 %%% allout-layout: t
 %%% erlang-indent-level: 2
 %%% End:
-

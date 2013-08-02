@@ -82,14 +82,9 @@ malformed_request(ReqData, Ctx0) ->
   end.
 
 resource_exists(ReqData, Ctx) ->
-  Nodename = orddict:fetch(nodename, Ctx),
-  OtpPlt   = orddict:fetch(otp_plt, Ctx),
-  OutPlt   = orddict:fetch(out_plt, Ctx),
-  Files    = orddict:fetch(modules, Ctx),
-  Result   = edts:get_dialyzer_result(Nodename, OtpPlt, OutPlt, Files),
-  Exists       = (edts_resource_lib:exists_p(ReqData, Ctx, [nodename, modules])
-                  andalso not (Result =:= {error, not_found})),
-  {Exists, ReqData, orddict:store(result, Result, Ctx)}.
+  MFArgKeys = {edts_dialyzer, run, [otp_plt, out_plt, modules]},
+  edts_resource_lib:check_exists_and_do_rpc(ReqData, Ctx, [modules], MFArgKeys).
+
 
 to_json(ReqData, Ctx) ->
   Result = orddict:fetch(result, Ctx),
@@ -143,21 +138,6 @@ malformed_request_test() ->
                malformed_request(req_data2, [])),
   ?assertEqual({true, req_data3, []}, malformed_request(req_data3, [])),
   ?assertEqual({true, req_data4, []}, malformed_request(req_data4, [])),
-  meck:unload().
-
-resource_exists_test() ->
-  Ctx = orddict:from_list([{nodename, node},
-                           {modules,   mod},
-                           {otp_plt,  otp},
-                           {out_plt,  out}]),
-  meck:unload(),
-  meck:new(edts_resource_lib),
-  meck:expect(edts_resource_lib, exists_p, fun(_, _, _) -> true end),
-  meck:new(edts),
-  meck:expect(edts, get_dialyzer_result, fun(_, _, _, _) -> ok end),
-  ?assertMatch({true, req_data, _}, resource_exists(req_data, Ctx)),
-  ?assertEqual(ok, orddict:fetch(result,
-                                 element(3, resource_exists(req_data, Ctx)))),
   meck:unload().
 
 to_json_test() ->

@@ -90,9 +90,9 @@ Example:
                    "\\.eterm$"
                    "\\.script$"
                    "\\.yaws$")
-  :irrelevant-files (".edts"
-                     ".gitignore"
-                     ".gitmodules")
+  :irrelevant-files ("^\\.edts$"
+                     "^\\.gitignore$"
+                     "^\\.gitmodules$")
   :lib-dirs ("lib"))
 
 (defun edts-project-selector (file)
@@ -379,12 +379,26 @@ projects and there is no previous .edts-file."
 
 (defun edts-project--create (project)
   "Create the .edts configuration file for PROJECT in its root directory."
-  (with-temp-file (edts-project--config-file project)
-    (loop for (k . v) in project do
-          (when (edts-project--config-prop-p (intern (format ":%s" k)))
-            (if (listp v)
-                (insert (format ":%s '%S\n" k v)) ;; quote value if list
-              (insert (format ":%s %S\n" k v)))))))
+    (edts-project-write-config (edts-project--config-file project)
+                               (edts-project--to-config project)))
+
+
+(defun edts-project--to-config (project)
+  "Convert an old-style project spec into on an edts-config."
+  (apply #'append
+         (loop for     (k . v) in project
+               for     prop = (intern (format ":%s" k))
+               when    (edts-project--config-prop-p prop)
+               collect (list prop v))))
+
+(defun edts-project-write-config (file config)
+  "Write CONFIG to FILE."
+  (with-temp-file file
+    (loop for (k v . rest) on config by #'cddr
+          do  (if (listp v)
+                  (insert (format "%s '%S\n" k v))
+                (insert (format "%s %S\n" k v)))))
+    config)
 
 (defun edts-project--config-file (project)
   "Return the path to PROJECT's eproject configuration file."
@@ -405,13 +419,13 @@ buffers, for which all PREDICATES hold true."
    (buffer-list)
    :initial-value nil))
 
+
 (defun edts-project-buffer-map (project-root function)
   "Return the result of running FUNCTION inside each buffer in PROJECT-ROOT."
   (let ((res nil))
     (with-each-buffer-in-project (gen-sym) project-root
       (push (funcall function) res))
     (reverse res)))
-
 
 ;;;;;;;;;;;;;;;;;;;;
 ;; Commands
@@ -423,3 +437,24 @@ auto-save data."
   (when (y-or-n-p (format "Revert all buffers in %s" (eproject-name)))
     (with-each-buffer-in-project (gensym) (eproject-root)
       (revert-buffer t t t))))
+
+;;;;;;;;;;;;;;;;;;;;
+;; Tests
+
+(when (member 'ert features)
+  (ert-deftest edts-project-basic-test ()
+    ;; Setup
+    (edts-test-with-config
+     edts-test-project1-directory
+     '(:name "test")
+     (let ((eproject-prefer-subproject t)
+           (file (car (edts-test-project1-modules))))
+       (find-file file)
+
+       ;; Test
+       (should (string= "test" (eproject-name)))
+       (should (get-buffer"*edts*"))
+       (should (get-buffer"*test*"))
+
+       ;; Cleanup
+       (edts-test-cleanup)))))

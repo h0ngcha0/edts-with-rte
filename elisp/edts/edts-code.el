@@ -29,11 +29,21 @@
 (require 'eproject-extras)
 (require 'path-util)
 
-(defvar edts-code-after-compilation-hook
+(defvar edts-code-before-compile-hook
+  nil
+  "Hooks to run before compilation. Hooks are called with the name of
+the module to be compiled as the only argument.")
+
+(defvar edts-code-after-compile-hook
   '(edts-code-eunit
     edts-code-xref-analyze-related
     edts-code-dialyze-related-hook-fun)
-  "Hooks to run after compilation finishes.")
+  "Hooks to run after compilation finishes. Hooks are called with the
+compilation result as a symbol as the only argument")
+(defvaralias ;; Compatibility
+  'edts-code-after-compilation-hook
+  'edts-code-after-compile-hook
+  "This variable is deprecated, use `edts-code-after-compile-hook'")
 
 (defcustom edts-code-xref-checks '(undefined_function_calls)
   "What xref checks EDTS should perform. A list of 0 or more of
@@ -92,6 +102,7 @@ with severity as key and a lists of issues as values"
   (let ((module   (ferl-get-module))
         (file     (buffer-file-name)))
     (when module
+      (run-hook-with-args 'edts-code-before-compile-hook (intern module))
       (edts-compile-and-load-async
        module file #'edts-code-handle-compilation-result))))
 
@@ -105,7 +116,7 @@ with severity as key and a lists of issues as values"
       (edts-code-display-error-overlays "edts-code-compile" errors)
       (edts-code-display-warning-overlays "edts-code-compile" warnings)
       (edts-face-update-buffer-mode-line (edts-code-buffer-status))
-      (run-hook-with-args 'edts-code-after-compilation-hook (intern result))
+      (run-hook-with-args 'edts-code-after-compile-hook (intern result))
       result)))
 
 (defun edts-code-xref-analyze-related (&optional result)
@@ -345,4 +356,3 @@ non-recursive."
           (goto-char (overlay-start overlay))
           (message (overlay-get overlay 'help-echo)))
         (error "EDTS: no more issues found"))))
-

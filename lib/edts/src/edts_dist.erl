@@ -61,9 +61,9 @@
 add_paths(Node, LibDirs) ->
   ok = call(Node, edts_code, add_paths, [LibDirs]).
 
+
 %%------------------------------------------------------------------------------
-%% @doc
-%% Calls call/4 with Args = [].
+%% @equiv call(Node, Mod, Fun, []).
 %% @end
 -spec call(Node::node(), Mod::atom(), Fun::atom()) ->
               term() | {badrpc, term()}.
@@ -74,7 +74,7 @@ call(Node, Mod, Fun) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Calls Mod:Fun with Args remotely on Node.
+%% Calls Mod:Fun with Args remotely on Node
 %% @end
 -spec call(Node::node(), Mod::atom(), Fun::atom(), Args::[term()]) ->
               term() | {badrpc, term()}.
@@ -83,15 +83,21 @@ call(Node, Mod, Fun, Args) ->
   Self = self(),
   Pid = spawn(fun() -> do_call(Self, Node, Mod, Fun, Args) end),
   receive
-    {Pid, Res} -> Res
+    {Pid, {badrpc, {'EXIT', Rsn}}}      -> error(Rsn);
+    {Pid, {badrpc, Err}}                -> error(Err);
+    {Pid, Res}                          -> Res
   end.
 
 
 do_call(Parent, Node, Mod, Fun, Args) ->
-  try_set_remote_group_leader(Node),
-  try Parent ! {self(), rpc:call(Node, Mod, Fun, Args)}
-  catch C:E -> Parent ! {self(), {C, E}}
-  end.
+  Res =
+    try
+      try_set_remote_group_leader(Node),
+      rpc:call(Node, Mod, Fun, Args)
+    catch
+      _:Err -> {badrpc, Err}
+    end,
+  Parent ! {self(), Res}.
 
 %% @doc Set the group leader to get all tty output on the remote nade.
 try_set_remote_group_leader(Node) ->
@@ -101,8 +107,9 @@ try_set_remote_group_leader(Node) ->
       Info = rpc:call(Node, erlang, process_info, [Pid]),
       RemoteGroupLeader = proplists:get_value(group_leader, Info),
       group_leader(RemoteGroupLeader, self());
-    {badrpc, Err} -> Err
+    {badrpc, Err} -> error(Err)
   end.
+
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -188,9 +195,12 @@ remote_load_module(Node, Mod) ->
   %% incompatible with the binary format of the EDTS node's OTP release.
   %% Kind of ugly to have to use two rpc's but I can't find a better way to
   %% do this.
-  {File, _Opts}  = filename:find_src(Mod),
-  {ok, Mod, Bin} = remote_compile_module(Node, File),
-  {module, Mod}  = remote_load_module(Node, Mod, File, Bin).
+  case filename:find_src(Mod) of
+    {error, Err} -> error(Err);
+    {File, _Opts} ->
+      {ok, Mod, Bin} = remote_compile_module(Node, File),
+      {module, Mod}  = remote_load_module(Node, Mod, File, Bin)
+  end.
 
 
 %%------------------------------------------------------------------------------

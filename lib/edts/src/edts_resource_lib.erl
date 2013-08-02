@@ -28,9 +28,10 @@
 %%%_* Exports ==================================================================
 
 %% Application callbacks
--export([ exists_p/3
-        , make_nodename/1
-        , validate/3]).
+-export([ check_exists_and_do_rpc/4,
+          exists_p/3,
+          make_nodename/1,
+          validate/3]).
 
 %%%_* Includes =================================================================
 -include_lib("tulib/include/prelude.hrl").
@@ -43,6 +44,16 @@
 
 %%%_* API ======================================================================
 
+check_exists_and_do_rpc(ReqData, Ctx, Required, {M, F, ArgKeys}) ->
+  case exists_p(ReqData, Ctx, [nodename|Required]) of
+    false -> {false, ReqData, Ctx};
+    true  ->
+      Node = orddict:fetch(nodename, Ctx),
+      case edts:call(Node, M, F, [orddict:fetch(Key, Ctx) || Key <- ArgKeys]) of
+        {ok, Result} -> {true, ReqData, orddict:store(result, Result, Ctx)};
+        {error, _}   -> {false, ReqData, Ctx}
+      end
+  end.
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -71,9 +82,15 @@ exists_p(ReqData, Ctx, Keys) ->
 %%------------------------------------------------------------------------------
 validate(ReqData0, Ctx0, Keys) ->
   F = fun(Key, {ReqData, Ctx}) ->
+          Name = case Key of
+                   Key when is_atom(Key) -> Key;
+                   {_Type, Props}        ->
+                     {ok, N} = tulib_lists:assoc(name, Props),
+                     N
+                 end,
           case (term_to_validate(Key))(ReqData, Ctx) of
             {ok, Value} ->
-              {ReqData, orddict:store(Key, Value, Ctx)};
+              {ReqData, orddict:store(Name, Value, Ctx)};
             {error, Rsn} ->
               edts_log:error("API input validation failed. Key ~p, Rsn: ~p",
                              [Key, Rsn]),
@@ -112,13 +129,30 @@ atom_to_exists_p(modules)  -> fun modules_exists_p/2.
 term_to_validate(app_include_dirs) ->
   fun(RD, _Ctx) -> dirs_validate(RD, "app_include_dirs") end;
 term_to_validate(arity)                -> fun arity_validate/2;
-term_to_validate(exported)             -> fun exported_validate/2;
+term_to_validate(cmd)                  -> fun cmd_validate/2;
+term_to_validate({enum, Props})            ->
+  fun(RD, _Ctx) -> enum_validate(RD, Props) end;
+term_to_validate(exported)             ->
+  fun(ReqData, _Ctx) ->
+      enum_validate(ReqData, [{name,    exported},
+                              {allowed, [true, false, all]},
+                              {default, all},
+                              {required, false}])
+  end;
 term_to_validate(file)                 -> fun file_validate/2;
 term_to_validate({file, Key})          ->
   fun(ReqData, Ctx) -> file_validate(ReqData, Ctx, ?a2l(Key)) end;
 term_to_validate(files)                -> fun files_validate/2;
 term_to_validate(function)             -> fun function_validate/2;
-term_to_validate(info_level)           -> fun info_level_validate/2;
+term_to_validate(info_level)           ->
+  fun(ReqData, _Ctx) ->
+      enum_validate(ReqData, [{name,     info_level},
+                              {allowed,  [basic, detailed]},
+                              {default,  basic},
+                              {required, false}])
+  end;
+term_to_validate(line) ->
+  fun(RD, _Ctx) -> non_neg_integer_validate(RD, line) end;
 term_to_validate(module)               -> fun module_validate/2;
 term_to_validate(modules)              -> fun modules_validate/2;
 term_to_validate(nodename)             -> fun nodename_validate/2;
@@ -140,14 +174,55 @@ term_to_validate(xref_checks)          -> fun xref_checks_validate/2.
                {ok, non_neg_integer()} | error.
 %%------------------------------------------------------------------------------
 arity_validate(ReqData, _Ctx) ->
+  Str = wrq:path_info(arity, ReqData),
   try
-    case list_to_integer(wrq:path_info(arity, ReqData)) of
+    case list_to_integer(Str) of
       Arity when Arity >= 0 -> {ok, Arity};
       _ -> error
     end
-  catch error:badarg -> error
+  catch error:badarg -> {error, {badarg, Str}}
   end.
 
+%%------------------------------------------------------------------------------
+%% @doc
+%% Validate integer
+%% @end
+-spec integer_validate(wrq:req_data(), string()) ->
+               {ok, integer()} | error.
+%%------------------------------------------------------------------------------
+integer_validate(ReqData, Key) ->
+  Str = wrq:path_info(Key, ReqData),
+  try {ok, list_to_integer(Str)}
+  catch error:badarg -> {error, {badarg, Str}}
+  end.
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Validate a non-negative integer
+%% @end
+-spec non_neg_integer_validate(wrq:req_data(), string()) ->
+               {ok, integer()} | error.
+%%------------------------------------------------------------------------------
+non_neg_integer_validate(ReqData, Key) ->
+  case integer_validate(ReqData, Key) of
+    {ok, Int} when Int >= 0 -> {ok, Int};
+    {ok, Int}               -> {error, {illegal, integer_to_list(Int)}};
+    Err                     -> Err
+  end.
+
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Validate debugger command
+%% @end
+-spec cmd_validate(wrq:req_data(), orddict:orddict()) ->
+                      {ok, atom()} | error.
+%%------------------------------------------------------------------------------
+cmd_validate(ReqData, _Ctx) ->
+  case wrq:get_qs_value("cmd", ReqData) of
+    undefined         -> error;
+    L when is_list(L) -> {ok, list_to_atom(L)}
+  end.
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -164,19 +239,30 @@ dirs_validate(ReqData, QsKey) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Validate export parameter
+%% Validate an enumeration
 %% @end
--spec exported_validate(wrq:req_data(), orddict:orddict()) ->
-                    {ok,  boolean() | all} | {error, {illegal, string()}}.
+-spec enum_validate(wrq:req_data(),
+                    [{atom(), term()}]) ->
+                    {ok,  atom()} |
+                       {error, {illegal, string()}} |
+                       {error, {not_found, atom()}}.
 %%------------------------------------------------------------------------------
-exported_validate(ReqData, _Ctx) ->
-  case wrq:get_qs_value("exported", ReqData) of
-    undefined -> {ok, all};
-    "all"     -> {ok, all};
-    "true"    -> {ok, true};
-    "false"   -> {ok, false};
-    V         -> {error, {illegal, V}}
+enum_validate(ReqData, Props) ->
+  {ok, Name}   = tulib_lists:assoc(name,     Props),
+  QsKey = atom_to_list(Name),
+  {ok, Allowed} = tulib_lists:assoc(allowed,  Props),
+  Required      = tulib_lists:assoc(required, Props, false),
+  case wrq:get_qs_value(QsKey, ReqData) of
+    undefined when Required -> {error, {not_found, QsKey}};
+    undefined               -> {ok, _} = tulib_lists:assoc(default, Props);
+    V                       ->
+      Atom = list_to_atom(V),
+      case lists:member(Atom, Allowed) of
+        true  -> {ok, Atom};
+        false -> {error, {illegal, V}}
+      end
   end.
+
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -236,21 +322,6 @@ do_file_validate(File) ->
 function_validate(ReqData, _Ctx) ->
   {ok, list_to_atom(wrq:path_info(function, ReqData))}.
 
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Validate arity
-%% @end
--spec info_level_validate(wrq:req_data(), orddict:orddict()) ->
-                    {ok, basic | detailed} | {error, {illegal, string()}}.
-%%------------------------------------------------------------------------------
-info_level_validate(ReqData, _Ctx) ->
-  case wrq:get_qs_value("info_level", ReqData) of
-    undefined  -> {ok, basic};
-    "basic"    -> {ok, basic};
-    "detailed" -> {ok, detailed};
-    V          -> {error, {illegal, V}}
-  end.
 
 
 %%------------------------------------------------------------------------------
@@ -349,7 +420,7 @@ project_root_validate(ReqData, _Ctx) ->
 %% @doc
 %% Validate a string
 %% @end
--spec string_validate(wrq:req_data(), orddict:orddict()) -> {ok, string()}.
+-spec string_validate(wrq:req_data(), string()) -> {ok, string()}.
 %%------------------------------------------------------------------------------
 string_validate(ReqData, Key) ->
   case wrq:get_qs_value(Key, ReqData) of
@@ -391,22 +462,16 @@ arity_validate_test() ->
   meck:expect(wrq, path_info, fun(arity, _) -> "-1" end),
   ?assertEqual(error, arity_validate(foo, bar)),
   meck:expect(wrq, path_info, fun(arity, _) -> "a" end),
-  ?assertEqual(error, arity_validate(foo, bar)),
+  ?assertEqual({error, {badarg, "a"}}, arity_validate(foo, bar)),
   meck:unload().
 
-exported_validate_test() ->
+cmd_validate_test() ->
   meck:unload(),
   meck:new(wrq),
-  meck:expect(wrq, get_qs_value, fun("exported", _) -> undefined end),
-  ?assertEqual({ok, all}, exported_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("exported", _) -> "all" end),
-  ?assertEqual({ok, all}, exported_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("exported", _) -> "true" end),
-  ?assertEqual({ok, true}, exported_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("exported", _) -> "false" end),
-  ?assertEqual({ok, false}, exported_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("exported", _) -> true end),
-  ?assertEqual({error, {illegal, true}}, exported_validate(foo, bar)),
+  meck:expect(wrq, get_qs_value, fun("cmd", _) -> undefined end),
+  ?assertEqual(error, cmd_validate(foo, bar)),
+  meck:expect(wrq, get_qs_value, fun("cmd", _) -> "foo" end),
+  ?assertEqual({ok, foo}, cmd_validate(foo, bar)),
   meck:unload().
 
 file_validate_test() ->
@@ -442,19 +507,6 @@ function_validate_test() ->
   meck:new(wrq),
   meck:expect(wrq, path_info, fun(function, _) -> "foo" end),
   ?assertEqual({ok, foo}, function_validate(foo, bar)),
-  meck:unload().
-
-info_level_validate_test() ->
-  meck:unload(),
-  meck:new(wrq),
-  meck:expect(wrq, get_qs_value, fun("info_level", _) -> undefined end),
-  ?assertEqual({ok, basic}, info_level_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("info_level", _) -> "basic" end),
-  ?assertEqual({ok, basic}, info_level_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("info_level", _) -> "detailed" end),
-  ?assertEqual({ok, detailed}, info_level_validate(foo, bar)),
-  meck:expect(wrq, get_qs_value, fun("info_level", _) -> true end),
-  ?assertEqual({error, {illegal, true}}, info_level_validate(foo, bar)),
   meck:unload().
 
 dirs_validate_validate_test() ->
@@ -527,10 +579,44 @@ xref_checks_validate_test() ->
                xref_checks_validate(foo, bar)),
   meck:unload().
 
+enum_validate_test_() ->
+  {setup,
+   fun() ->
+       meck:unload(),
+       meck:new(wrq),
+       meck:expect(wrq, get_qs_value, fun("undefined", _) -> undefined;
+                                         (Name, _) -> Name
+                                      end)
+   end,
+   fun(_) ->
+       meck:unload()
+   end,
+  [%% Value found
+   ?_assertEqual({ok, a}, enum_validate(fake_req, [{name,     a},
+                                                   {allowed,  [a, b]},
+                                                   {default,  a},
+                                                   {required, false}])),
+   %% Value not found, expect default
+   ?_assertEqual({ok, b}, enum_validate(fake_req, [{name,     undefined},
+                                                   {allowed,  [a, b]},
+                                                   {default,  b},
+                                                   {required, false}])),
+   %% Required value not found
+   ?_assertEqual({error, {not_found, "undefined"}},
+                  enum_validate(fake_req, [{name,     undefined},
+                                           {allowed,  [a, b]},
+                                           {default,  b},
+                                           {required, true}])),
+   %% Illegal value
+   ?_assertEqual({error, {illegal, "c"}},
+                 enum_validate(fake_req, [{name,     c},
+                                          {allowed,  [a, b]},
+                                          {default,  b},
+                                          {required, true}]))
+  ]}.
 
 %%%_* Emacs ====================================================================
 %%% Local Variables:
 %%% allout-layout: t
 %%% erlang-indent-level: 2
 %%% End:
-

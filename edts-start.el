@@ -22,28 +22,27 @@
 (add-to-list 'load-path (concat edts-root-directory "elisp/path-util"))
 (require 'path-util)
 
+(defconst edts-code-directory
+  (path-util-join edts-root-directory "elisp" "edts")
+  "Directory where edts code is located.")
+
 (defconst edts-lib-directory
-  (path-util-join (file-name-directory edts-root-directory) "elisp")
+  (path-util-join edts-root-directory "elisp")
   "Directory where edts libraries are located.")
 
+(defconst edts-plugin-directory
+  (path-util-join edts-root-directory "plugins")
+  "Directory where edts plugins are located.")
+
 (defconst edts-test-directory
-  (path-util-join (file-name-directory edts-root-directory) "test")
+  (path-util-join edts-root-directory "test")
   "Directory where edts test data are located.")
 
-(mapcar #'(lambda (p)
-            (add-to-list 'load-path (path-util-join  edts-lib-directory p)))
-        '("auto-complete"
-          "auto-highlight-symbol-mode"
-          "edts"
-          "eproject"
-          "ert"
-          "popup-el"
-          "pos-tip"))
-
-(when (and (boundp 'erlang-root-dir) erlang-root-dir)
-  ;; add erl under erlang root dir to exec-path
-  (add-to-list
-   'exec-path (concat (directory-file-name erlang-root-dir) "/bin")))
+;; Add all libs to load-path
+(loop for  (name dirp . rest)
+      in   (directory-files-and-attributes edts-lib-directory nil "^[^.]")
+      when dirp
+      do   (add-to-list 'load-path (path-util-join edts-lib-directory name)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Requires
@@ -64,19 +63,12 @@
 Must be preceded by `erlang-font-lock-keywords-macros' to work properly.")
 
 ;; EDTS
-(load "ferl" nil edts-start-inhibit-load-msgs)
-(load "edts" nil edts-start-inhibit-load-msgs)
-(load "edts-log" nil edts-start-inhibit-load-msgs)
-(load "edts-code" nil edts-start-inhibit-load-msgs)
-(load "edts-complete" nil edts-start-inhibit-load-msgs)
-(load "edts-doc" nil edts-start-inhibit-load-msgs)
-(load "edts-rest" nil edts-start-inhibit-load-msgs)
-(load "edts-face" nil edts-start-inhibit-load-msgs)
-(load "edts-man" nil edts-start-inhibit-load-msgs)
-(load "edts-navigate" nil edts-start-inhibit-load-msgs)
-(load "edts-refactor" nil edts-start-inhibit-load-msgs)
-(load "edts-shell" nil edts-start-inhibit-load-msgs)
-(load "edts-project" nil edts-start-inhibit-load-msgs)
+(loop
+ for  file
+ in   (sort (directory-files edts-code-directory nil "\\.el$") #'string<)
+ ;; avoid symlinks created as emacs backups
+ when (not (file-symlink-p (path-util-join edts-code-directory file)))
+ do   (load file nil edts-start-inhibit-load-msgs))
 
 ;; External
 (require 'auto-highlight-symbol)
@@ -258,6 +250,7 @@ further.
     t))
 
 ;; Global setup
+(edts-plugin-init-all)
 (make-directory edts-data-directory 'parents)
 (add-hook 'erlang-mode-hook 'edts-erlang-mode-hook)
 

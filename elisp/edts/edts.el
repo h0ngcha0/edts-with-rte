@@ -287,7 +287,9 @@ localhost."
   "Syncronously query epmd to see whether it has a node with NAME registered."
   (condition-case ex
       (with-temp-buffer
-        (let ((socket (open-network-stream "epmd" (current-buffer) "0" 4369)))
+        (let ((socket (open-network-stream "epmd" (current-buffer) "0" 4369))
+              (process (get-buffer-process (current-buffer))))
+          (set-process-query-on-exit-flag process nil)
           (process-send-string socket (edts-build-epmd-message "n"))
           (accept-process-output socket 0.5))
         (member name (edts-nodenames-from-string (buffer-string))))
@@ -479,12 +481,12 @@ fails."
 
 (defun edts-get-basic-module-info (module)
   "Fetches basic info about module on the node associated with current buffer"
-  (edts-get-module-info module 'basic))
+  (edts-get-module-info (edts-node-name) module 'basic))
 
 (defun edts-get-detailed-module-info (module)
   "Fetches detailed info about MODULE on the node associated with current
 buffer"
-  (edts-get-module-info module 'detailed))
+  (edts-get-module-info (edts-node-name) module 'detailed))
 
 (defun edts-get-free-vars (snippet)
   "Return a list of the free variables in SNIPPET."
@@ -505,10 +507,9 @@ buffer"
          (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
 
 
-(defun edts-get-module-info (module level)
-  "Fetches info about MODULE on the node associated with current buffer.
-LEVEL is either basic or detailed."
-  (let* ((resource (list "nodes" (edts-node-name) "modules" module))
+(defun edts-get-module-info (node module level)
+  "Fetches info about MODULE on NODE LEVEL is either basic or detailed."
+  (let* ((resource (list "nodes" node "modules" module))
          (args     (list (cons "info_level" (symbol-name level))))
          (res      (edts-rest-get resource args)))
     (if (equal (assoc 'result res) '(result "200" "OK"))
@@ -547,10 +548,10 @@ parsed response as the single argument."
   "Compile MODULE in FILE on the node associated with current buffer,
 asynchronously. When the request terminates, call CALLBACK with the
 parsed response as the single argument."
-  (let* ((node-name (edts-node-name))
-         (resource  (list "nodes" node-name "modules" module))
-         (rest-args (list (cons "file" file)))
-         (cb-args   (list callback 201)))
+  (let* ((node-name   (edts-node-name))
+         (resource    (list "nodes" node-name "modules" module))
+         (rest-args   (list (cons "file" file)))
+         (cb-args     (list callback 201)))
     (edts-log-debug "Compiling %s async on %s" module node-name)
     (edts-rest-post-async resource rest-args #'edts-async-callback cb-args)))
 
@@ -582,23 +583,75 @@ ARGS as the other arguments"
       (null
        (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result reply)))))))
 
-(defun edts-compile-and-load (module file)
-  "Compile MODULE in FILE on the node associated with current buffer."
-  (edts-log-debug "Compiling %s on %s" module (edts-node-name))
-  (let* ((resource
-          (list "nodes" (edts-node-name) "modules" module))
-         (args (list (cons "file" file)))
-         (res (edts-rest-post resource args)))
-    (if (equal (assoc 'result res) '(result "201" "Created"))
-        (cdr (assoc 'body res))
-      (null (edts-log-error "Unexpected reply: %s"
-                            (cdr (assoc 'result res)))))))
-
 (defun edts-get-includes (&optional module)
   "Get all includes of module in current-buffer from the node
 associated with that buffer."
   (let ((info (edts-get-detailed-module-info (or module (ferl-get-module)))))
     (cdr (assoc 'includes info)))) ;; Get all includes
+
+(defun edts-toggle-breakpoint (node-name module line)
+  "Add/remove breakpoint in MODULE at LINE. This does not imply that MODULE becomes
+interpreted."
+  (let* ((resource
+          (list "debugger" node-name "breakpoints" module line))
+         (args '())
+         (res (edts-rest-post resource args)))
+    (if (equal (assoc 'result res) '(result "201" "Created"))
+        (cdr (assoc 'body res))
+      (null (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
+
+(defun edts-get-breakpoints (node-name)
+  "Get all breakpoints and related info on NODE-NAME."
+  (let* ((resource
+          (list "debugger" node-name "breakpoints"))
+         (args '())
+         (res (edts-rest-get resource args)))
+    (if (equal (assoc 'result res) '(result "200" "OK"))
+        (cdr (assoc 'body res))
+      (null (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
+
+(defun edts-wait-for-debugger (node-name)
+  "Wait for the debugger to attach and return the current interpreter state"
+  (edts--send-debugger-command-async node-name "wait_for_debugger"
+                                     #'(lambda (result)
+                                         (if (equal (assoc 'result result)
+                                                    '(result "200" "OK"))
+                                             (edts-debug-handle-debugger-reply
+                                              (cdr (assoc 'body result)))))))
+
+(defun edts-step-into (node-name)
+  "When debugging, perform a step-into"
+  (edts--send-debugger-command node-name "debugger_step"))
+
+(defun edts-continue (node-name)
+  "When debugging, continue execution until the next breakpoint or termination"
+  (edts--send-debugger-command node-name "debugger_continue"))
+
+(defun edts-step-out (node-name)
+  "When debugging, step out of the current function"
+  (edts--send-debugger-command node-name "debugger_step_out"))
+
+(defun edts-debug-stop (node-name)
+  "Stop debugging"
+  (edts--send-debugger-command node-name "debugger_stop"))
+
+(defun edts--send-debugger-command (node-name command)
+  "Convenience function to send COMMAND to the debugger at NODE-NAME"
+  (let* ((resource
+          (list "debugger" node-name))
+         (args (list (cons "cmd" command)))
+         (res (edts-rest-post resource args)))
+    (if (equal (assoc 'result res) '(result "201" "Created"))
+        (cdr (assoc 'body res))
+      (null (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
+
+(defun edts--send-debugger-command-async (node-name command callback)
+  "Convenience function to send COMMAND to the debugger at NODE-NAME,
+executing CALLBACK when a reply is received"
+  (let* ((resource
+          (list "debugger" node-name))
+         (args (list (cons "cmd" command))))
+    (edts-rest-get-async resource args callback '())))
 
 (defun edts-node-registeredp (node &optional no-error)
   "Return non-nil if NODE is registered with the EDTS server."

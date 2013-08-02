@@ -301,15 +301,21 @@ do_init_node(ProjectName,
              AppIncludeDirs,
              ProjectIncludeDirs) ->
   try
-    ok = edts_dist:remote_load_modules(Node, [edts_code,
-                                              edts_dialyzer,
-                                              edts_eunit,
-                                              edts_eunit_listener,
-                                              edts_module_server,
-                                              edts_xref,
-                                              edts_util]),
+    Plugins = plugins(),
+    PluginRemoteLoad =
+      lists:flatmap(fun(Plugin) -> Plugin:project_node_modules() end, Plugins),
+    PluginRemoteServices =
+      lists:flatmap(fun(Plugin) -> Plugin:project_node_services() end, Plugins),
+    ok = edts_dist:remote_load_modules(Node,
+                                       [edts_code,
+                                        edts_dialyzer,
+                                        edts_eunit,
+                                        edts_eunit_listener,
+                                        edts_module_server,
+                                        edts_xref,
+                                        edts_util] ++
+                                         PluginRemoteLoad),
     ok = edts_dist:add_paths(Node, expand_code_paths(ProjectRoot, LibDirs)),
-
     {ok, ProjectDir} = application:get_env(edts, project_data_dir),
     AppEnv = [{project_name,         ProjectName},
               {project_data_dir,     ProjectDir},
@@ -317,12 +323,20 @@ do_init_node(ProjectName,
               {app_include_dirs,     AppIncludeDirs},
               {project_include_dirs, ProjectIncludeDirs}],
     init_node_env(Node, AppEnv),
-    start_services(Node, [edts_code])
+    start_services(Node, [edts_code] ++ PluginRemoteServices)
   catch
     C:E ->
       edts_log:error("~p initialization crashed with ~p:~p~nStacktrace:~n~p",
                      [Node, C, E, erlang:get_stacktrace()]),
       E
+  end.
+
+plugins() ->
+  case application:get_env(edts, plugin_dir) of
+    undefined -> [];
+    {ok, Dir} ->
+      {ok, PluginDirs} = file:list_dir(Dir),
+      [list_to_atom(PluginDir) || PluginDir <- PluginDirs]
   end.
 
 init_node_env(Node, AppEnv) ->
@@ -540,4 +554,3 @@ node_store_test() ->
 %%% allout-layout: t
 %%% erlang-indent-level: 2
 %%% End:
-

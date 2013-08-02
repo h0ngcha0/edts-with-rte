@@ -28,19 +28,14 @@
 %%%_* Exports ==================================================================
 
 %% API
--export([compile_and_load/2,
-         get_dialyzer_result/4,
-         get_function_info/4,
-         get_module_eunit_result/2,
-         get_module_info/3,
-         get_module_xref_analysis/3,
+-export([call/3,
+         call/4,
+         call/5,
          init_node/6,
          is_node/1,
          node_available_p/1,
-         modules/1,
          node_reachable/1,
-         nodes/0,
-         who_calls/4]).
+         nodes/0]).
 
 %%%_* Includes =================================================================
 -include_lib("eunit/include/eunit.hrl").
@@ -50,154 +45,6 @@
 %%%_* Types ====================================================================
 
 %%%_* API ======================================================================
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Compiles Module on Node and returns a list of any errors and warnings.
-%% If there are no errors, the module will be loaded.
-%% @end
--spec compile_and_load(Node::node(), Filename::file:filename()) ->
-                          [term()] | {error, not_found}.
-%%------------------------------------------------------------------------------
-compile_and_load(Node, Filename) ->
-  edts_log:debug("compile_and_load ~p on ~p", [Filename, Node]),
-  edts_server:wait_for_node(Node),
-  case edts_dist:call(Node, edts_code, compile_and_load, [Filename]) of
-    {badrpc, E} ->
-      Fmt = "Error in remote call edts_code:compile_and_load/1 on ~p: ~p",
-      edts_log:error(Fmt, [Node, E]),
-      {error, not_found};
-    Result      -> Result
-  end.
-
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns the result of dialyzing Files on Node.
-%% @end
-%%
--spec get_dialyzer_result(Node::node(),
-                          OtpPlt::filename:filename(),
-                          OutPlt::filename:filename(),
-                          Files::[filename:filename()]) ->
-                             {ok, edts_code:issue()}.
-%%------------------------------------------------------------------------------
-get_dialyzer_result(Node, OtpPlt, OutPlt, Files) ->
-  edts_log:debug("get_dialyzer_result ~p (~p) -> ~p, ~p",
-                 [Files, OtpPlt, OutPlt, Node]),
-  case edts_dist:call(Node, edts_dialyzer, run, [OtpPlt, OutPlt, Files]) of
-    {badrpc, _} -> {error, not_found};
-    Result      -> Result
-  end.
-
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns information about Module:Function/Arity on Node.
-%% @end
-%%
--spec get_function_info( Node    ::node()
-                       , Module  ::module()
-                       , Function::atom()
-                       , Arity   ::non_neg_integer()) ->
-                           [{atom(), term()}] | {error, not_found}.
-%%------------------------------------------------------------------------------
-get_function_info(Node, Module, Function, Arity) ->
-  edts_log:debug("get_function info ~p:~p/~p on ~p",
-              [Module, Function, Arity, Node]),
-  Args = [Module, Function, Arity],
-  case edts_dist:call(Node, edts_code, get_function_info, Args) of
-    {badrpc, E} ->
-      Fmt = "Error in remote call edts_code:get_function_info/3 on ~p: ~p",
-      edts_log:error(Fmt, [Node, E]),
-      {error, not_found};
-    Info  -> Info
-  end.
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns a list of the functions calling Module:Function/Arity on Node.
-%% @end
-%%
--spec who_calls( Node    ::node()
-               , Module  ::module()
-               , Function::atom()
-               , Arity   ::non_neg_integer()) ->
-                   [{module(), atom(), term()}].
-%%------------------------------------------------------------------------------
-who_calls(Node, Module, Function, Arity) ->
-  edts_log:debug("who_calls ~p:~p/~p on ~p", [Module, Function, Arity, Node]),
-  edts_server:wait_for_node(Node),
-  Args = [Module, Function, Arity],
-  case edts_dist:call(Node, edts_code, who_calls, Args) of
-    {badrpc, E} ->
-      Fmt = "Error in remote call edts_code:who_calls/2 on ~p: ~p",
-      edts_log:error(Fmt, [Node, E]),
-      {error, not_found};
-    Info  -> Info
-  end.
-
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns information about Module on Node.
-%% @end
-%%
--spec get_module_info(Node::node(), Module::module(),
-                      Level::detailed | basic) ->
-                         {ok, [{atom(), term()}]}.
-%%------------------------------------------------------------------------------
-get_module_info(Node, Module, Level) ->
-  edts_log:debug("get_module_info ~p, ~p on ~p", [Module, Level, Node]),
-  case edts_dist:call(Node, edts_code, get_module_info, [Module, Level]) of
-    {badrpc, E} ->
-      Fmt = "Error in remote call edts_code:get_module_info/2 on ~p: ~p",
-      edts_log:error(Fmt, [Node, E]),
-      {error, not_found};
-    Info  -> Info
-  end.
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns the result of eunit tests in Module on Node
-%% @end
-%%
--spec get_module_eunit_result(Node::node(), Module::module()) ->
-                                 {ok, [{error,
-                                        File::file:filename(),
-                                        non_neg_integer(),
-                                        Desc::string()}]}.
-%%------------------------------------------------------------------------------
-get_module_eunit_result(Node, Module) ->
-  edts_log:debug("get_module_eunit_result ~p, ~p", [Module, Node]),
-  case edts_dist:call(Node, edts_eunit, run_tests, [Module]) of
-    {badrpc, _} -> {error, not_found};
-    Result      -> Result
-  end.
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns the result of xref checks of Module on Node
-%% @end
-%%
--spec get_module_xref_analysis(Node::node(), [Modules::module()],
-                      Checks::[atom()]) ->
-                         {ok, [{error,
-                                File::file:filename(),
-                                non_neg_integer(),
-                                Desc::string()}]}.
-%%------------------------------------------------------------------------------
-get_module_xref_analysis(Node, Modules, Checks) ->
-  edts_log:debug("get_module_xref_analysis ~p, ~p on ~p",
-                 [Modules, Checks, Node]),
-  case edts_dist:call(Node, edts_code, check_modules, [Modules, Checks]) of
-    {badrpc, E} ->
-      Fmt = "Error in remote call edts_code:check_modules/2 on ~p: ~p",
-      edts_log:error(Fmt, [Node, E]),
-      {error, not_found};
-    Info  -> Info
-  end.
-
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -248,17 +95,6 @@ node_available_p(Node) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Returns a list of all erlang modules available on Node.
-%% @end
-%%
--spec modules(Node::node()) -> [module()].
-%%------------------------------------------------------------------------------
-modules(Node) ->
-  edts_dist:call(Node, edts_code, modules).
-
-
-%%------------------------------------------------------------------------------
-%% @doc
 %% Returns true if Node is registerend with the epmd on localhost.
 %% @end
 %%
@@ -280,42 +116,26 @@ nodes() ->
 
 %%%_* Internal functions =======================================================
 
+call(Node, Mod, Fun) ->
+  call(Node, Mod, Fun, []).
+
+call(Node, Mod, Fun, Args) ->
+  call(Node, Mod, Fun, Args, true).
+
+call(Node, Mod, Fun, Args, LogError) ->
+  try {ok, edts_dist:call(Node, Mod, Fun, Args)}
+  catch
+    error:Err ->
+      case LogError of
+        false -> ok;
+        true  ->
+          edts_log:error("Error in remote call ~p:~p/~p on ~p: ~p",
+                         [Mod, Fun, length(Args), Node, Err])
+      end,
+      {error, Err}
+  end.
+
 %%%_* Tests ====================================================================
-
-get_module_eunit_result_test_() ->
-  [?_assertMatch({ok, [{'passed-test', _Source, Line1, "no asserts failed"},
-                       {'passed-test', _Source, Line2, "no asserts failed"}]}
-                 when is_integer(Line1) andalso is_integer(Line2),
-                 get_module_eunit_result(node(), edts_test_module)),
-   ?_assertEqual({error, not_found},
-                 get_module_eunit_result(not_a_node, edts_test_module)),
-   ?_assertEqual({error, not_found},
-                 get_module_eunit_result(node(), not_a_module))].
-
-get_dialyzer_result_test_() ->
-  [{setup,
-   fun() ->
-       meck:unload(),
-       meck:new(edts_dist)
-   end,
-   fun(_) ->
-       meck:unload()
-   end,
-   [fun() ->
-        F = fun(n, edts_dialyzer, run, ["plt", "out", "foo"]) ->
-                {badrpc, error}
-            end,
-        meck:expect(edts_dist, call, F),
-        ?assertEqual({error, not_found},
-                     get_dialyzer_result(n, "plt", "out", "foo"))
-    end,
-    fun() ->
-        F = fun(n, edts_dialyzer, run, ["plt", "out", "foo"]) -> res end,
-        meck:expect(edts_dist, call, F),
-        ?assertEqual(res, get_dialyzer_result(n, "plt", "out", "foo"))
-
-    end]
-  }].
 
 %%%_* Emacs ====================================================================
 %%% Local Variables:

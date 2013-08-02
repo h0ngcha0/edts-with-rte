@@ -87,35 +87,30 @@ post_is_create(ReqData, Ctx) ->
   {true, ReqData, Ctx}.
 
 resource_exists(ReqData, Ctx) ->
-  Nodename = orddict:fetch(nodename, Ctx),
-  Module   = orddict:fetch(module, Ctx),
   case wrq:method(ReqData) of
-    'GET'  ->
-      case edts_resource_lib:exists_p(ReqData, Ctx, [nodename, module]) of
-        false -> {false, ReqData, Ctx};
-        true  ->
-          InfoLevel = orddict:fetch(info_level, Ctx),
-          Info      = edts:get_module_info(Nodename, Module, InfoLevel),
-          {Info =/= {error, not_found}, ReqData, orddict:store(info, Info, Ctx)}
-      end;
     'POST' ->
       Exists = edts_resource_lib:exists_p(ReqData, Ctx, [nodename, module]),
-      {Exists, ReqData, Ctx}
+      {Exists, ReqData, Ctx};
+    'GET' ->
+      MFArgKeys = {edts_code, get_module_info, [module, info_level]},
+      edts_resource_lib:check_exists_and_do_rpc(ReqData, Ctx, [], MFArgKeys)
   end.
 
 
 %% Handlers
 from_json(ReqData, Ctx) ->
-  Nodename = orddict:fetch(nodename, Ctx),
+  Node     = orddict:fetch(nodename, Ctx),
   Filename = orddict:fetch(file, Ctx),
-  {Result, {Errors0, Warnings0}} = edts:compile_and_load(Nodename, Filename),
+  edts_server:wait_for_node(Node),
+  {ok, {Result, {Errors0, Warnings0}}} =
+    edts:call(Node, edts_code, compile_and_load, [Filename]),
   Errors   = {array, [format_error(Error) || Error <- Errors0]},
   Warnings = {array, [format_error(Warning) || Warning <- Warnings0]},
   Data = {struct, [{result, Result}, {warnings, Warnings}, {errors, Errors}]},
   {true, wrq:set_resp_body(mochijson2:encode(Data), ReqData), Ctx}.
 
 to_json(ReqData, Ctx) ->
-  Info = orddict:fetch(info, Ctx),
+  Info = orddict:fetch(result, Ctx),
   Data = format(Info),
   {mochijson2:encode(Data), ReqData, Ctx}.
 
@@ -201,28 +196,6 @@ malformed_request_post_test() ->
   ?assertEqual({true, req_data2, []}, malformed_request(req_data2, [])),
   meck:unload().
 
-resource_exists_get_test() ->
-  Ctx = orddict:from_list([{nodename, node},
-                           {module,   mod}]),
-  meck:unload(),
-  meck:new(wrq),
-  meck:expect(wrq, method, fun(_) -> 'GET' end),
-  meck:new(edts),
-  meck:expect(edts, get_module_info, fun(node, mod, basic) -> [];
-                                        (node, mod, error) -> {error, not_found}
-                                     end),
-  meck:new(edts_resource_lib),
-  meck:expect(edts_resource_lib, exists_p, fun(_, _, [nodename, module]) ->
-                                               true
-                                           end),
-  ?assertMatch({true, req_data, _},
-               resource_exists(req_data, [{info_level, basic}|Ctx])),
-  ?assertEqual(
-     [],
-     orddict:fetch(info, element(3,
-                                 resource_exists(req_data,
-                                                 [{info_level, basic}|Ctx])))),
-  meck:unload().
 
 format_error_test_() ->
   ?_assertEqual([{type, t}, {file, <<"f">>}, {line, l}, {description, <<"d">>}],
