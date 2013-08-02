@@ -1,5 +1,6 @@
 MAKEFLAGS = -s
-PLUGINS = $(wildcard plugins/*)
+#PLUGINS = $(wildcard plugins/*)
+PLUGINS = plugins/edts_rte
 ERL_LIBS=`pwd`"/lib"
 
 .PHONY: all
