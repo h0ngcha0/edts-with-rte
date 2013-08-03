@@ -30,6 +30,7 @@
         , get_module_sorted_fun_info/1
         , is_tail_call/3
         , read_and_add_records/2
+        , record_table_name/0
         , traverse_clause_struct/2
         , var_to_val_in_fun/3
         ]).
@@ -192,6 +193,12 @@ get_module_sorted_fun_info(M) ->
         [[Line, Fun, Arity] | LineFunAritys]
     end, [], FunAritys),
   lists:reverse(lists:sort(AllLineFunAritys)).
+
+%% @doc The name of the ETS table to store the tuple representation of
+%%      the records
+-spec record_table_name() -> atom().
+record_table_name() ->
+  edts_rte_record_table.
 
 %% @doc When MFA and depth are the same, check if it is still a
 %%      differnet function call.
@@ -629,9 +636,13 @@ replace_var_with_val_in_expr( {'receive', L, Clauses0, Int, Exprs0}
   Clauses  = replace_var_with_val_in_clauses(Clauses0, ECLn, Bs),
   Expr     = replace_var_with_val_in_exprs(Exprs0, ECLn, Bs),
   {'receive', L, Clauses, Int, Expr};
+replace_var_with_val_in_expr( {'fun', L, {clauses, Clauses0}}
+                            , ECLn, Bs)                    ->
+  Clauses  = replace_var_with_val_in_clauses(Clauses0, ECLn, Bs),
+  {'fun', L, {clauses, Clauses}};
 replace_var_with_val_in_expr( {record, _, _Name, _Fields} = Record
                             , _ECLn, _Bs)                                 ->
-  expand_records(edts_rte_server:record_table_name(), Record);
+  expand_records(record_table_name(), Record);
 replace_var_with_val_in_expr([Statement0|T], ECLn, Bs)                    ->
   Statement = replace_var_with_val_in_expr(Statement0, ECLn, Bs),
   [Statement | replace_var_with_val_in_expr(T, ECLn, Bs)];

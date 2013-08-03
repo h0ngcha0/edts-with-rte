@@ -133,7 +133,7 @@ send_exit() ->
 %% FIXME: need to come up with a way to add all existing records from
 %%        a project and remove records when recompile a particular module
 read_and_add_records(Module) ->
-  edts_rte_util:read_and_add_records(Module, record_table_name()).
+  edts_rte_util:read_and_add_records(Module, edts_rte_util:record_table_name()).
 
 %%%_* gen_server callbacks  ====================================================
 %%------------------------------------------------------------------------------
@@ -154,7 +154,7 @@ init([]) ->
   %% records in erlang are purely syntactic sugar. create a table to store the
   %% mapping between records and their definitions.
   %% set the table to public to make debugging easier
-  RcdTbl = ets:new(record_table_name(), [public, named_table]),
+  RcdTbl = ets:new(edts_rte_util:record_table_name(), [public, named_table]),
   {ok, #rte_state{record_table = RcdTbl}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
@@ -498,12 +498,6 @@ mfa_info_tree_do_form_to_str([MFAInfo|T], Acc0) ->
   AccChildren = mfa_info_tree_do_form_to_str(MFAInfo#mfa_info.children, []),
   Acc         = Acc0 ++ [{MFAInfo#mfa_info.key, ReplacedFun} | AccChildren],
   mfa_info_tree_do_form_to_str(T, Acc).
-
-%% @doc The name of the ETS table to store the tuple representation of
-%%      the records
--spec record_table_name() -> atom().
-record_table_name() ->
-  edts_rte_record_table.
 
 %% @doc Concat a list of replaced function strings together.
 -spec concat_funs_str([{Key, string()}]) -> string()
