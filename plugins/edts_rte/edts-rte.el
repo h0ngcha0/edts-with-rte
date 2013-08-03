@@ -204,4 +204,12 @@ value returned by rte."
   `((,(rte-regex) 0 'font-lock-warning-face prepend)
     ("^\\(\\.+\\)" 0 'highlight prepend)))
 
+(add-hook 'edts-code-after-compile-hook 'edts-rte)
+
+(defun edts-rte (result)
+  "Execute the edts-rte-run function when there is no error in
+the file"
+  (when (not (eq result 'error))
+    (edts-rte-run)))
+
 (provide 'edts-rte)
