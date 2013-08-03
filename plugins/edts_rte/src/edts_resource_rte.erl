@@ -139,13 +139,7 @@ do_retrieve_cmd_and_args({struct,[{<<"cmd">>, Cmd}]}) ->
   {to_atom(Cmd), nil}.
 
 run_command(rte_run, [Module, Fun, Args], Node)                 ->
-  rte_run(Node, Module, Fun, Args).
-
-rte_run(Node, Module, Func, Args) ->
-  case edts_dist:call(Node, edts_rte_server, rte_run, [Module, Func, Args]) of
-    {badrpc, _} -> {error, not_found};
-    Result      -> Result
-  end.
+  edts_rte:rte_run(Node, Module, Fun, Args).
 
 %%%_* Unit tests ===============================================================
 init_test() ->
