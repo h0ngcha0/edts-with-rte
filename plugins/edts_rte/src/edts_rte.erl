@@ -26,6 +26,9 @@
 -behaviour(edts_plugin).
 
 %%%_* Exports =================================================================
+-export([ rte_run/4
+        ]).
+
 %% Behaviour exports
 -export([edts_server_services/0,
          project_node_modules/0,
@@ -33,6 +36,12 @@
 
 %%%_* Defines ==================================================================
 %%%_* API ======================================================================
+rte_run(Node, Module, Func, Args) ->
+  case edts_dist:call(Node, edts_rte_server, rte_run, [Module, Func, Args]) of
+    {badrpc, _} -> {error, not_found};
+    Result      -> Result
+  end.
+
 %% Behaviour callbacks
 edts_server_services()  -> [].
 project_node_modules()  ->
