@@ -663,11 +663,8 @@ do_replace(VarName, Value, L) ->
   replace_line_num(ValForm, L).
 
 make_replaced_str(VarName, Value) ->
-  lists:flatten(io_lib:format( "{~p,~p,~p}."
-                             , [special_symbol(), VarName, Value])).
-
-special_symbol() ->
-  "__edts_rte__".
+  lists:flatten(io_lib:format( "{b,~p,s,~p,e}."
+                             , [VarName, Value])).
 
 get_tokens(ValStr) ->
   {ok, Tokens, _} = erl_scan:string(ValStr),

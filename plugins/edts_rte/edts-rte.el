@@ -158,9 +158,11 @@ returned by edts rte"
                    (setq displayed-p t))
           (message ""))))))
 
+;; question mark means non-greedy
 (defun rte-regex ()
   "Regex to match the return replaced vars from the edts-rte"
-  "\{\"__edts_rte__\",\\([^\(}\|,\)]+\\),\\([^\(}\|,\)]+\\)\}")
+  "\{b,\\(.+?\\),s,\\(.+?\\)\,e}"
+  )
 
 (defadvice forward-char (after forward-display-rte-var)
   "Advice for forward-char for displaying the rte variable name"
