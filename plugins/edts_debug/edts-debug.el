@@ -1,4 +1,4 @@
-;; Copyright 2012 João Neves <sevenjp@gmail.com>
+;; Copyright 2013 Thomas Järvstrand <tjarvstrand@gmail.com>
 ;;
 ;; This file is part of EDTS.
 ;;
@@ -19,11 +19,121 @@
 
 ;; Window configuration to be restored when quitting debug mode
 
+(require 'edts-debug-list-breakpoint-mode)
+(require 'edts-debug-list-interpreted-mode)
+
+(defface edts-debug-breakpoint-active-face
+  '((((class color) (background dark)) (:background "dark blue"))
+    (((class color) (background light)) (:background "light blue"))
+    (t (:bold t)))
+  "Face used for marking warning lines."
+  :group 'edts)
+
+(defface edts-debug-breakpoint-inactive-face
+  '((((class color) (background dark)) (:background "grey"))
+    (((class color) (background light)) (:background "light grey"))
+    (t (:bold t)))
+  "Face used for marking warning lines."
+  :group 'edts)
+
+
+(defvar edts-debug-breakpoint-face-prio 800
+  "Face priority for breakpoints.")
+
 (defun edts-debug-init ()
   "Initialize edts-debug."
+  ;; Keys
   (define-key edts-mode-map "\C-c\C-db"   'edts-debug-break)
   (define-key edts-mode-map "\C-c\C-di"   'edts-debug-interpret)
-  (define-key edts-mode-map "\C-c\C-d\M-i" 'edts-debug-show-interpreted))
+  (define-key edts-mode-map "\C-c\C-d\M-i" 'edts-debug-show-interpreted)
+  (add-to-list 'mode-line-misc-info
+               '(edts-mode edts-debug-mode-line-info)))
+
+(defvar edts-debug-mode-line-info ""
+  "The string with edts-debug related information to display in
+the mode-line.")
+(make-variable-buffer-local 'edts-debug-mode-line-info)
+
+(defvar edts-debug-breakpoint-alist nil
+  "Alist with breakpoints for each node. Each value is an alist with one
+key for each interpreted module the value of which is a list of
+breakpoints for that module")
+
+(defvar edts-debug-interpreted-alist nil
+  "Alist with interpreted modules for each node. Each value is an list
+of strings.")
+
+
+(defun edts-debug-sync ()
+  "Synchronize debug information between EDTS and the Emacs instance."
+  (interactive)
+  ;; (message " %s" edts-debug-interpreted-alist)
+  (edts-debug-sync-interpreted-alist)
+  (edts-debug-list-interpreted-update)
+  (edts-debug-sync-breakpoint-alist)
+  (edts-debug-list-breakpoint-update)
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when edts-mode
+        (let ((node   (edts-node-name))
+              (module (ferl-get-module)))
+          (when (and node module)
+            (edts-debug-update-buffer-info node module)))))))
+
+(defun edts-debug-sync-interpreted-alist ()
+  "Synchronizes `edts-debug-interpreted-alist'."
+  (setq edts-debug-interpreted-alist
+        (loop for node in (edts-get-nodes)
+              collect (cons node (edts-debug-interpreted-modules node)))))
+
+(defun edts-debug-sync-breakpoint-alist ()
+  "Synchronizes `edts-debug-breakpoint-alist'."
+  (setq edts-debug-breakpoint-alist
+        (loop for node in (edts-get-nodes)
+              for node-breakpoints = (edts-debug-all-breakpoints node)
+              when node-breakpoints
+              collect (loop
+                       for breakpoint in node-breakpoints
+                       with breakpoints
+                       for module     = (cdr (assoc 'module breakpoint))
+                       for old-elt    = (assoc module breakpoints)
+                       ;; To get the breakpoint representation, delete the
+                       ;; module key/value of the breakpoint alist (since that
+                       ;; is the key in the outer alist)
+                       for break-list = (cons
+                                         (delete
+                                          (cons 'module module) breakpoint)
+                                         (cdr old-elt))
+                       for new-elt    = (cons module break-list)
+                       do (setq breakpoints
+                                (cons new-elt
+                                      (delete old-elt breakpoints)))
+                       finally (return (cons node breakpoints))))))
+
+(defun edts-debug-update-buffer-info (node module)
+  (if (member module (cdr (assoc node edts-debug-interpreted-alist)))
+      (setq edts-debug-mode-line-info "Interpreted ")
+    (setq edts-debug-mode-line-info ""))
+
+  (edts-face-remove-overlays '(edts-debug-breakpoint))
+  (let ((breaks (cdr (assoc module
+                            (cdr (assoc node edts-debug-breakpoint-alist))))))
+    (loop for break in breaks
+        for line      = (cdr (assoc 'line      break))
+        for status    = (cdr (assoc 'status    break))
+        for trigger   = (cdr (assoc 'trigger   break))
+        for condition = (cdr (assoc 'condition break))
+        for face      = (if (string= status "active")
+                            'edts-debug-breakpoint-active-face
+                          'edts-debug-breakpoint-inactive-face)
+        for fmt       = "Breakpoint status: %s, trigger: %s, condition: %s"
+        do
+        (edts-face-display-overlay face
+                                   line
+                                   (format fmt status trigger condition)
+                                   'edts-debug-breakpoint
+                                   edts-debug-breakpoint-face-prio
+                                   t))))
 
 (defun edts-debug-interpret (&optional node module interpret)
   "Set interpretation state for MODULE on NODE according to INTERPRET.
@@ -53,7 +163,8 @@ other value toggles interpretation, which is the default behaviour."
              (fmt (if interpreted
                       "%s is now interpreted on %s"
                     "%s is no longer interpreted on %s")))
-        (edts-log-info fmt module node-name)))
+        (edts-log-info fmt module node-name)
+        (edts-debug-sync)))
      ((equal res '(result "403" "Forbidden"))
       (null (edts-log-error "%s is not interpretable" module)))
      (t
@@ -72,7 +183,7 @@ breakpoint existence at LINE, which is the default behaviour."
                      'toggle))
   (let* ((node-name (or node (edts-node-name)))
          (module    (or module (ferl-get-module)))
-         (line      (line-number-at-pos))
+         (line      (or line (line-number-at-pos)))
          (break     (cond
                      ((eq break t) "true")
                      ((null break) "false")
@@ -85,15 +196,12 @@ breakpoint existence at LINE, which is the default behaviour."
          (rest-args (list (cons "break" break)))
          (reply     (edts-rest-post resource rest-args))
          (res       (assoc 'result reply)))
-    (cond
-     ((and (equal res '(result "201" "Created"))
-           (cdr (assoc 'break (cdr (assoc 'body reply)))))
-      (edts-log-debug "breakpoint set on %s:%s on %s" module line node-name))
-      ((equal res '(result "201" "Created"))
-       (edts-log-debug "breakpoint unset on %s:%s on %s" module line node-name))
-     (t
-      (null
-       (edts-log-error "Unexpected reply: %s" (cdr res)))))))
+    (if (not (equal res '(result "201" "Created")))
+        (null (edts-log-error "Unexpected reply: %s" (cdr res)))
+      (if (cdr (assoc 'break (cdr (assoc 'body reply))))
+          (edts-log-info "breakpoint set on %s:%s on %s" module line node-name)
+        (edts-log-info "breakpoint unset on %s:%s on %s" module line node-name))
+      (edts-debug-sync))))
 
 (defun edts-debug-breakpoints (&optional node module)
   "Return a list of all breakpoint states in module on NODE. NODE and
@@ -163,74 +271,6 @@ default to the values associated with current buffer."
          (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res))))
       (cdr (assoc 'modules (cdr (assoc 'body reply)))))))
 
-(defvar edts-debug-show-interpreted-mode-keymap
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "SPC") 'edts-debug--show-modules-find-module)
-    (define-key map (kbd "RET") 'edts-debug--show-modules-find-module)
-    (define-key map (kbd "u")   'edts-debug--show-modules-uninterpret-module)
-    (define-key map (kbd "q")   'quit-window)
-    map))
-
-
-(define-minor-mode edts-debug-show-interpreted-mode
-  "EDTS mode for listing interpreted buffers."
-  nil
-  ""
-  edts-debug-show-interpreted-mode-keymap
-  (read-only-mode 1))
-
-
-(defun edts-debug-show-interpreted ()
-  "Show a listing of all interpreted modules on all nodes registered
-with EDTS."
-  (interactive)
-  (switch-to-buffer (get-buffer-create "*EDTS Interpreted Modules*"))
-  (edts-debug--update-interpreted-modules)
-  (edts-debug-show-interpreted-mode)
-  (setq truncate-lines t))
-
-(defun edts-debug--update-interpreted-modules ()
-  (let ((buf (get-buffer "*EDTS Interpreted Modules*"))
-        (inhibit-read-only t))
-    (when buf
-      (erase-buffer)
-      (insert "Module\tNode\tFile\n")
-      (insert "------\t------\t------\n")
-      (save-excursion
-        (loop for node in (edts-get-nodes)
-              do  (loop for mod in (edts-debug-interpreted-modules node)
-                        for file = (edts-debug--get-module-source node mod)
-                        do  (insert (format "%s\t%s\t%s\n" mod node file)))))
-      (align-regexp (point-min) (point-max) "\\([^[:space:]]\\)\t" 1 2 t))))
-
-(defvar edts-debug--show-line-regexp
-  "\\([^[:blank:]]*\\)\\s-*\\([^[:blank:]]*\\)\\s-*\\([^[:blank:]]*\\)\n"
-  "Regexp for splitting a line into module, node and file parts")
-
-(defun edts-debug--show-modules-part-of-line (part)
-  (save-excursion
-    (beginning-of-line)
-    (re-search-forward edts-debug--show-line-regexp nil t))
-  (case part
-    ('module (match-string 1))
-    ('node   (match-string 2))
-    ('file   (match-string 3))))
-
-(defun edts-debug--show-modules-uninterpret-module ()
-  (interactive)
-  (let ((node (edts-debug--show-modules-part-of-line 'node))
-        (mod  (edts-debug--show-modules-part-of-line 'module)))
-    (edts-debug-interpret node mod nil)
-    (edts-debug--update-interpreted-modules)))
-
-(defun edts-debug--show-modules-find-module ()
-  (interactive)
-  (let ((file (edts-debug--show-modules-part-of-line 'file)))
-    (when (file-exists-p file)
-        (find-file file))))
-
-(defun edts-debug--get-module-source (node module)
-  (cdr (assoc 'source (edts-get-module-info node module 'basic))))
 
 (when (member 'ert features)
   (ert-deftest edts-debug-basic-test ()
