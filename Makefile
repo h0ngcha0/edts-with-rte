@@ -1,6 +1,7 @@
 MAKEFLAGS = -s
-PLUGINS = $(wildcard plugins/*)
-ERL_LIBS=`pwd`"/lib"
+PLUGINS = $(subst plugins/,,$(wildcard plugins/*))
+export ERL_LIBS:=`pwd`"/lib"
+EMACS?= "emacs"
 
 .PHONY: all
 all: submodule-update libs $(PLUGINS)
@@ -19,7 +20,7 @@ plugins: $(PLUGINS)
 
 .PHONY: $(PLUGINS)
 $(PLUGINS):
-	$(MAKE) -e ERL_LIBS="$(ERL_LIBS)" -C $@ MAKEFLAGS="$(MAKEFLAGS)"
+	$(MAKE) -e ERL_LIBS="$(ERL_LIBS)" -C plugins/$@ MAKEFLAGS="$(MAKEFLAGS)"
 
 .PHONY: clean
 clean: $(PLUGINS:%=clean-%)
@@ -29,15 +30,15 @@ clean: $(PLUGINS:%=clean-%)
 
 .PHONY: $(PLUGINS:%=clean-%)
 $(PLUGINS:%=clean-%):
-	$(MAKE) -C $(@:clean-%=%) MAKEFLAGS="$(MAKEFLAGS)" clean
+	$(MAKE) -C plugins/$(@:clean-%=%) MAKEFLAGS="$(MAKEFLAGS)" clean
 
 .PHONY: ert
 ert:
 	$(MAKE) -C test/edts-test-project1 MAKEFLAGS="$(MAKEFLAGS)"
-	emacs -q --no-splash --batch \
+	$(EMACS) -q --no-splash --batch \
 	--eval "(add-to-list 'load-path  \"${PWD}/elisp/ert\")" \
 	-l edts-start.el \
-	-f ert-run-tests-batch-and-exit
+	-f edts-test-run-suites-batch-and-exit
 
 .PHONY: test
 test: all ert test-edts $(PLUGINS:%=test-%)
@@ -48,7 +49,7 @@ test-edts:
 
 .PHONY: $(PLUGINS:%=test-%)
 $(PLUGINS:%=test-%):
-	$(MAKE) -e ERL_LIBS="$(ERL_LIBS)" -C $(@:test-%=%) MAKEFLAGS="$(MAKEFLAGS)" test
+	$(MAKE) -e ERL_LIBS="$(ERL_LIBS)" -C plugins/$(@:test-%=%) MAKEFLAGS="$(MAKEFLAGS)" test
 
 .PHONY: eunit
 eunit: all eunit-edts $(PLUGINS:%=eunit-%)
@@ -59,5 +60,5 @@ eunit-edts:
 
 .PHONY: $(PLUGINS:%=eunit-%)
 $(PLUGINS:%=eunit-%):
-	$(MAKE) -e ERL_LIBS="$(ERL_LIBS)" -C $(@:eunit-%=%) MAKEFLAGS="$(MAKEFLAGS)" eunit
+	$(MAKE) -e ERL_LIBS="$(ERL_LIBS)" -C plugins/$(@:eunit-%=%) MAKEFLAGS="$(MAKEFLAGS)" eunit
 
