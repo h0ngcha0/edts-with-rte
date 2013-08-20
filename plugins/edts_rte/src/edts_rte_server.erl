@@ -158,18 +158,30 @@ init([]) ->
   {ok, #rte_state{record_table = RcdTbl}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
-  %% try to read the record from the current module.. right now this is the
-  %% only record support
   RcdTbl   = State#rte_state.record_table,
-  AddedRds = edts_rte_util:read_and_add_records(Module, RcdTbl),
-  edts_rte_app:debug("added record definitions:~p~n", [AddedRds]),
-
   Args     = binary_to_list(Args0),
   ArgsTerm = edts_rte_util:convert_list_to_term(Args, RcdTbl),
+
+  %% try to read the record from the current module.. right now this is the
+  %% only record support
+  ReadRcdTblFun =
+    fun() ->
+      AddedRds = edts_rte_util:read_and_add_records(Module, RcdTbl),
+      edts_rte_app:debug("added record definitions:~p~n", [AddedRds]),
+      ok
+    end,
+
+  InterpretModFun =
+    fun() ->
+      case edts_rte_int_listener:interpret_modules([Module]) of
+        [Module] -> ok;
+        []       -> {error, unable_to_interpret_module}
+      end
+    end,
+
   edts_rte_app:debug("arguments:~p~n", [ArgsTerm]),
 
   %% set breakpoints
-  [Module] = edts_rte_int_listener:interpret_modules([Module]),
   Arity    = length(ArgsTerm),
   {ok, set, {Module, Fun, Arity}} =
     edts_rte_int_listener:set_breakpoint(Module, Fun, Arity),
@@ -190,6 +202,14 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
                                          , result                = undefined
                                          , exit_p                = false
                                          }}.
+
+run([]) ->
+  ok;
+run([F|Fs]) ->
+  case F() of
+    {error, Status} -> {error, Status};
+    ok              -> run(Fs)
+  end.
 
 %%------------------------------------------------------------------------------
 %% @private
