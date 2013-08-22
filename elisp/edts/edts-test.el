@@ -51,11 +51,20 @@
           (delete-if (lambda (x) (equal (car x) root))
                      eproject-attributes-alist)))
 
+(defun edts-test-cleanup-all-buffers ()
+  (interactive)
+  (edts-shell-kill-all)
+  (dolist (buf (buffer-list))
+    (when (and (buffer-live-p buf) (buffer-local-value 'edts-mode buf))
+      (kill-buffer buf)
+      (edts-log-info "Killed %s" buf))))
+
 (defmacro edts-test-case (suite name args desc &rest body)
   "Define a testcase in SUITE. All other arguments are the same is in
 `ert-deftest'."
   (declare (indent 3))
-  `(macroexpand (ert-deftest ,name ,args ,desc :tags '(,suite) ,@body)))
+  `(macroexpand
+    (ert-deftest ,name ,args ,desc :tags '(,suite edts-test-suite) ,@body)))
 
 
 (defvar edts-test-suite-alist nil
@@ -75,8 +84,20 @@
                                  ,(eval teardown))
                    ,alistvar)))))
 
+(defvar edts-test--suite-hist nil
+  "List of recent test suites run interactively.")
+
 (defun edts-test-run-suite-interactively (suite-name)
+  (interactive
+   (list
+    (let* ((default (car edts-test--suite-hist))
+           (prompt (if default
+                       (format "Run suite (default %s): " default)
+                     "Run suite: ")))
+      (read-from-minibuffer prompt nil nil t 'edts-test--suite-hist default))))
   (edts-test-run-suite 'ert-run-tests-interactively suite-name))
+
+(defalias 'edts-test-suite 'edts-test-run-suite-interactively)
 
 (defun edts-test-run-suite-batch (suite-name)
   (edts-test-run-suite 'ert-run-tests-batch suite-name))
@@ -103,5 +124,32 @@
         (when (cadr suite)
           (funcall (cadr suite) setup-res))
         test-res))))
+
+
+(defvar edts-test--testcase-hist nil
+  "List of recent test suites run interactively.")
+
+(defun edts-test-run-test-interactively (test-name)
+  (interactive
+   (list
+    (let* ((default (car edts-test--testcase-hist))
+           (prompt (if default
+                       (format "Run test (default %s): " default)
+                     "Run test: ")))
+      (read-from-minibuffer prompt nil nil t 'edts-test--testcase-hist default))))
+  (edts-test-run-testcase 'ert-run-tests-interactively test-name))
+
+(defun edts-test-run-testcase (ert-fun test-name)
+  (let* ((ert-test-obj (car (ert-select-tests 'edts-project-selector-test t)))
+         (suite-name (car (remq 'edts-test-suite (ert-test-tags ert-test-obj))))
+         (suite (cdr (assoc suite-name edts-test-suite-alist))))
+    (when suite
+      (let ((setup-res (when (car suite) (funcall (car suite))))
+            (test-res  (funcall ert-fun test-name)))
+        (when (cadr suite)
+          (funcall (cadr suite) setup-res))
+        test-res))))
+
+
 
 (provide 'edts-test)

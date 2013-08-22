@@ -24,6 +24,15 @@
 
 (require 'cl)
 (require 'eproject)
+
+;; Prevent project-file-visit-hooks from being run several times every
+;; time a file is opened or reverted.
+;; Without this, the project-file-visit-hook for a file will be called three
+;; times. Once for `after-change-major-mode-hook' for fundamental-mode, once for
+;; `after-change-major-mode-hook' for erlang-mode and once for `find-file-hook'
+(remove-hook 'after-change-major-mode-hook
+             'eproject--after-change-major-mode-hook)
+
 (require 'eproject-extras)
 (require 'path-util)
 
@@ -80,6 +89,10 @@ Example:
 (define-project-type edts (generic)
   (edts-project-selector file)
   :config-file ".edts"
+  ;; TODO:
+  ;; This is copied from `edts-erlang-mode-regexps', can't figure out right now
+  ;; how to use that variable here and expand it inside the define-project-type
+  ;; macro instead of hardcoding the regexps
   :relevant-files ("^\\.erlang$"
                    "\\.app$"
                    "\\.app.src$"
@@ -95,20 +108,44 @@ Example:
                      "^\\.gitmodules$")
   :lib-dirs ("lib"))
 
-(defun edts-project-selector (file)
+(defun edts-project-selector (file-name)
   "Try to figure out if FILE should be part of an edts-project."
-  (edts-project-maybe-create file)
-  (look-for ".edts"))
+  (edts-project-maybe-create file-name)
+  (let (prev-root
+        (cur-root (path-util-pop file-name))
+        bestroot)
+    (while (and cur-root (not (string= prev-root cur-root)))
+      (setq prev-root cur-root)
+      (setq cur-root (path-util-pop cur-root))
+      (when (file-exists-p (path-util-join cur-root ".edts"))
+        (setq bestroot cur-root)))
+    (edts-log-debug "edts-project-selector result: %s" bestroot)
+    bestroot))
 
-(define-project-type edts-otp (edts)
+(define-project-type edts-otp (generic)
   (edts-project-otp-selector file)
   :config-file nil
+  :relevant-files ("^\\.erlang$"
+                   "\\.app$"
+                   "\\.app.src$"
+                   "\\.config$"
+                   "\\.erl$"
+                   "\\.es$"
+                   "\\.escript$"
+                   "\\.eterm$"
+                   "\\.script$"
+                   "\\.yaws$")
+  :irrelevant-files ("^\\.edts$"
+                     "^\\.gitignore$"
+                     "^\\.gitmodules$")
   :lib-dirs ("lib/erlang/lib"))
 
 (defun edts-project-otp-selector (file)
   "Try to figure out if FILE should be part of an otp-project."
   (when (not (edts-project-selector file))
-    (edts-project-otp-selector-path file)))
+    (let ((res (edts-project-otp-selector-path file)))
+      (edts-log-debug "edts-project-otp selector result: %s" res)
+      res)))
 
 (defun edts-project-otp-selector-path (file)
     (let ((path (look-for "bin/erl")))
@@ -121,55 +158,73 @@ Example:
           ;; Do nothing if we're in an otp-repository.
           path))))
 
-(define-project-type edts-temp (edts)
+(define-project-type edts-temp (generic)
   (edts-project-temp-selector file)
   :config-file nil
+  :relevant-files ("^\\.erlang$"
+                   "\\.app$"
+                   "\\.app.src$"
+                   "\\.config$"
+                   "\\.erl$"
+                   "\\.es$"
+                   "\\.escript$"
+                   "\\.eterm$"
+                   "\\.script$"
+                   "\\.yaws$")
+  :irrelevant-files ("^\\.edts$"
+                     "^\\.gitignore$"
+                     "^\\.gitmodules$")
   :lib-dirs nil)
 
 (defun edts-project-temp-selector (file)
   "Try to figure out if FILE should be part of a temp-project."
-  (when (and
-         ;; otp-selector also checks that the normal project selector returns
-         ;; nil
-         (not (edts-project-selector file))
-         (not (edts-project-otp-selector file))
-         (string-match "\\.[eh]rl$" file))
-    (edts-project--temp-root file)))
+  (let ((res (when (and
+                    ;; otp-selector also checks that the normal project selector
+                    ;; returns nil
+                    (not (edts-project-selector file))
+                    (not (edts-project-otp-selector file))
+                    (string-match "\\.[eh]rl$" file))
+               (edts-project--temp-root file))))
+    (edts-log-debug "edts-project-temp-selector result: %s" res)
+    res))
 
 
 (defun edts-project-init-buffer ()
   "Called each time a buffer inside a configured edts-project is opened."
-  (edts-log-debug "Initializing project for %s" (current-buffer))
-  (edts-ensure-server-started)
-  (let ((root (eproject-root)))
+  (when (edts-project--run-init-p)
+    (edts-log-debug "Initializing project for %s" (current-buffer))
+    (edts-ensure-server-started)
+    (let ((root (eproject-root)))
 
-    (when (boundp 'edts-projects)
-      ;; -- Backward compatibility code --
-      ;; Override the configuration of the current buffer's eproject with the
-      ;; values from the corresponding entry in `edts-projects'.
-      (edts-project-set-attributes root (edts-project--old-plist-by-root root)))
+      (when (boundp 'edts-projects)
+        ;; -- Backward compatibility code --
+        ;; Override the configuration of the current buffer's eproject with the
+        ;; values from the corresponding entry in `edts-projects'.
+        (edts-project-set-attributes root
+                                     (edts-project--old-plist-by-root root)))
 
-    ;; Local project configuration overrides. These overrides take precedence
-    ;; over the ones in `edts-projects'.
-    (edts-project-set-attributes root (cdr (assoc root edts-project-overrides)))
+      ;; Local project configuration overrides. These overrides take precedence
+      ;; over the ones in `edts-projects'.
+      (edts-project-set-attributes root
+                                   (cdr (assoc root edts-project-overrides)))
 
-    ;; Set values of absent config parameters whose defaults are derived from
-    ;; other values.
-    (unless (eproject-attribute :node-sname)
-      (edts-project-set-attribute
-       root
-       :node-sname (eproject-name)))
-    (unless (eproject-attribute :start-command)
-      (edts-project-set-attribute
-       root
-       :start-command (edts-project--make-command)))
+      ;; Set values of absent config parameters whose defaults are derived from
+      ;; other values.
+      (unless (eproject-attribute :node-sname)
+        (edts-project-set-attribute
+         root
+         :node-sname (eproject-name)))
+      (unless (eproject-attribute :start-command)
+        (edts-project-set-attribute
+         root
+         :start-command (edts-project--make-command)))
 
-    ;; Make necessary initializations if opened file is relevant to its project.
-    (when (and (buffer-file-name) (eproject-classify-file (buffer-file-name)))
+      ;; Make necessary initializations if opened file is relevant to its
+      ;; project.
       (if (edts-node-registeredp (eproject-attribute :node-sname))
           (edts-project-node-refresh)
-      (edts-project-node-init)))))
-  (add-hook 'edts-project-file-visit-hook 'edts-project-init-buffer)
+        (edts-project-node-init)))))
+(add-hook 'edts-project-file-visit-hook 'edts-project-init-buffer)
 
 (defun edts-project-node-init ()
   (interactive)
@@ -184,7 +239,7 @@ Example:
       ;; Register it with the EDTS node
       (edts-project--register-project-node)
       (sleep-for 1))
-    (edts-project--kill-output-buffer)))
+      (edts-project--kill-output-buffer)))
 
 (defun edts-project-node-refresh ()
   "Asynchronously refresh the state of current buffer's project node"
@@ -212,39 +267,48 @@ Example:
 
 (defun edts-project-init-temp ()
   "Sets up values for a temporary project when visiting a non-project module."
-  (edts-log-debug "Initializing temporary project for %s" (current-buffer))
-  (edts-ensure-server-started)
-  (let* ((file (buffer-file-name))
-         (root-dir (edts-project--temp-root file))
-         (node-name (path-util-base-name root-dir)))
-    (unless (edts-shell-find-by-path root-dir)
-      (edts-shell-make-comint-buffer
-       (format "*%s*" node-name) ; buffer-name
-       node-name ; node-name
-       root-dir ; pwd
-       (list "erl" "-sname" node-name))) ; command
-    (edts-init-node-when-ready node-name node-name root-dir nil)
-    (edts-project-set-attribute root-dir :node-sname node-name)))
+  (when (edts-project--run-init-p)
+    (edts-ensure-server-started)
+    (let* ((file (buffer-file-name))
+           (root-dir (edts-project--temp-root file))
+           (node-name (path-util-base-name root-dir)))
+      (edts-project-set-attribute root-dir :node-sname node-name)
+      (if (edts-shell-find-by-path root-dir)
+          (edts-project-node-refresh)
+        (edts-log-debug "Initializing temporary project node for %s"
+                        (current-buffer))
+        (edts-shell-make-comint-buffer
+         (format "*%s*" node-name) ; buffer-name
+         node-name ; node-name
+         root-dir ; pwd
+         (list "erl" "-sname" node-name)) ; command
+        (edts-init-node-when-ready node-name node-name root-dir nil)))))
 (add-hook 'edts-temp-project-file-visit-hook 'edts-project-init-temp)
 
 (defun edts-project-init-otp ()
   "Sets up values for a temporary project when visiting an otp-module."
-  (edts-log-debug "Initializing otp project for %s" (current-buffer))
-  (edts-ensure-server-started)
-  (let* ((file (buffer-file-name))
-         (root-dir (eproject-root))
-         (node-name (format "otp-%s" (eproject-name)))
-         (erl (path-util-join (eproject-root) "bin/erl")))
-    (unless (edts-shell-find-by-path root-dir)
-      (edts-shell-make-comint-buffer
-       (format "*%s*" node-name) ; buffer-name
-       node-name ; node-name
-       root-dir ; pwd
-       (list erl "-sname" node-name))) ; command
-    (edts-init-node-when-ready node-name node-name root-dir nil)
-    (edts-project-set-attribute root-dir :node-sname node-name)))
+  (when (edts-project--run-init-p)
+    (edts-ensure-server-started)
+    (let* ((file (buffer-file-name))
+           (root-dir (eproject-root))
+           (node-name (format "otp-%s" (eproject-name)))
+           (erl (path-util-join (eproject-root) "bin/erl")))
+      (edts-project-set-attribute root-dir :node-sname node-name)
+      (if (edts-shell-find-by-path root-dir)
+          (edts-project-node-refresh)
+        (edts-log-debug "Initializing otp project node for %s" (current-buffer))
+        (edts-shell-make-comint-buffer
+         (format "*%s*" node-name) ; buffer-name
+         node-name ; node-name
+         root-dir ; pwd
+         (list erl "-sname" node-name)) ; command
+        (edts-init-node-when-ready node-name node-name root-dir nil)))))
 (add-hook 'edts-otp-project-file-visit-hook 'edts-project-init-otp)
 
+(defun edts-project--run-init-p ()
+  "Return non-nil if project buffer initialization code should be run."
+  (and (buffer-file-name)
+       (eproject-classify-file (buffer-file-name))))
 
 (defun edts-project--temp-root (file)
   "Find the appropriate root directory for a temporary project for
@@ -449,6 +513,7 @@ auto-save data."
    edts-project-suite
    ;; Setup
    (lambda ()
+     (edts-test-cleanup-all-buffers)
      (edts-test-setup-project edts-test-project1-directory
                               "test"
                               nil))
@@ -460,9 +525,36 @@ auto-save data."
   (edts-test-case edts-project-suite edts-project-basic-test ()
     "Basic project setup test"
     (let ((eproject-prefer-subproject t))
-        (find-file (car (edts-test-project1-modules)))
+      (find-file (car (edts-test-project1-modules)))
+      (should (file-exists-p
+               (path-util-join edts-test-project1-directory ".edts")))
+      (should (string= "test" (eproject-name)))
+      (should (get-buffer"*edts*"))
+      (should (get-buffer"*test*"))))
 
-        (should (string= "test" (eproject-name)))
-        (should (string= "test" (eproject-name)))
-        (should (get-buffer"*edts*"))
-        (should (get-buffer"*test*")))))
+  (edts-test-case edts-project-suite edts-project-selector-test ()
+    "Test that the in the case of multiple levels of projects, the super
+project is selected as the root, and other project types such as git-generic
+are not considered for erl-files."
+
+    ;; Assume that .git exists in edts directory (Yes, this is generally a
+    ;; stupid idea, but I'm feeling lazy right now).
+    (should (file-exists-p
+             (path-util-join (path-util-pop edts-test-project1-directory 2)
+                             ".git")))
+    (edts-test-setup-project (path-util-join edts-test-project1-directory
+                                             "lib"
+                                             "one")
+                             "test-dep"
+                             nil)
+
+    ;; There! Now we have a subproject called test-dep in
+    ;; `edts-test-project1-directory'/lib/one, a super project in
+    ;; `edts-test-project1-directory' and a git-project in
+    ;; `edts-test-project1-directory'/../..
+    ;; This test ensures that for
+    ;; `edts-test-project1-directory'/lib/one/src/one.erl, we choose
+    ;; `edts-test-project1-directory' as the project root.
+    (find-file (car (edts-test-project1-modules)))
+    (should (string= (path-util-normalize edts-test-project1-directory)
+                     (path-util-normalize (eproject-root))))))
