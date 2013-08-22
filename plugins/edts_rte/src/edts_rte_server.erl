@@ -265,40 +265,42 @@ code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
 %%%_* Internal =================================================================
+%% @doc Read and store the record definitions from the specified module.
 read_record_definition(Module, RcdTbl) ->
   AddedRds = edts_rte_util:read_and_add_records(Module, RcdTbl),
   edts_rte_app:debug("added record definitions:~p~n", [AddedRds]),
   ok.
 
+%% @doc interpret the current module
 interpret_current_module(Module) ->
   case edts_rte_int_listener:interpret_modules([Module]) of
     [Module] -> ok;
     []       -> {error, unable_to_interpret_module}
   end.
 
+%% @doc set the break point at the beginning of the function
 set_breakpoint_beg(Module, Function, Arity) ->
   case edts_rte_int_listener:set_breakpoint(Module, Function, Arity) of
     {ok, set, {Module, Function, Arity}} -> ok;
     _                                    -> {error, unable_to_set_breakpoint}
   end.
 
+%% @doc run mfa in a seperate process
 run_mfa(Module, Fun, ArgsTerm) ->
   Pid = erlang:spawn(make_rte_run_fun(Module, Fun, ArgsTerm)),
   edts_rte_app:debug("called function pid:~p~n", [Pid]),
   {ok, Pid}.
 
+%% @doc @see tulib_maybe:do/1
 -spec exec([fun()]) -> {ok, atom()} | {error, atom()}.
-%% @doc Call the functions Fs in sequence until either one of them fails
-%% (in which case that error is returned) or all of them have been
-%% executed (in which case the return value of the last function becomes
-%% the return value of the `do' expression).
 exec([F])    -> lift(F);
 exec([F|Fs]) -> case lift(F) of
                   ok               -> exec(Fs);
                   {ok, _}          -> exec(Fs);
-                {error, _} = Err -> Err
+                  {error, _} = Err -> Err
               end.
 
+%% @doc @see tulib_maybe:lift/1
 lift(F) ->
   case F() of
     ok           -> {ok, ok};
