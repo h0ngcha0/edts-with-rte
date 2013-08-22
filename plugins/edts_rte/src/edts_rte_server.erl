@@ -187,7 +187,7 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
                                 },
       {reply, {ok, finished}, State1};
     {error, Rsn} ->
-      {reply, {ok, Rsn}, State}
+      {reply, {error, Rsn}, State}
   end.
 
 %%------------------------------------------------------------------------------

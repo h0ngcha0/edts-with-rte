@@ -28,11 +28,11 @@
     (ensure-args-saved arguments)
     (edts-log-info "RTE Running %s:%s/%s" module function arity)
     (let* ((res (edts-rest-post resource args body)))
-      (if (equal (cdr (assoc 'result res)) '("200" "OK"))
-          (null (edts-log-info "RTE Status: %s"
-                               (cdr (assoc 'state (cdr (assoc 'body res))))))
-        (null (edts-log-error "Unexpected reply: %s"
-                              (cdr (assoc 'result res))))))))
+      (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
+          (null (edts-log-info "RTE Info: %s"
+                               (cdr (assoc 'message (cdr (assoc 'body res))))))
+        (null (edts-log-error "RTE Error: %s"
+                              (cdr (assoc 'message (cdr (assoc 'body res))))))))))
 
 (defun param-buffer ()
   "Return the name of the parameter buffer for the current node"
