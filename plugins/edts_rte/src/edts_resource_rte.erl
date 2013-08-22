@@ -117,15 +117,8 @@ to_json(ReqData, Ctx) ->
 %% @doc
 %% Encodes rte replies into the appropriate json structure
 %% @end
--spec encode_rte_info({ok, Info :: term()}) -> term().
-%%------------------------------------------------------------------------------
-encode_rte_info({ok, Info}) ->
-  do_encode_rte_info(Info);
-encode_rte_info({error, Error}) ->
-  [{state, error}, {message, Error}].
-
-do_encode_rte_info(State) ->
-  [{state, State}].
+encode_rte_info({State, Info}) ->
+  [{state, State}, {message, Info}].
 
 retrieve_cmd_and_args(ReqData) ->
   do_retrieve_cmd_and_args(
