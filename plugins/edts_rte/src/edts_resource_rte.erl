@@ -68,9 +68,7 @@ content_types_provided(ReqData, Ctx) ->
   {Map, ReqData, Ctx}.
 
 malformed_request(ReqData, Ctx) ->
-  %% edts_resource_lib:validate(ReqData, Ctx, [nodename, cmd, exclusions]).
   edts_resource_lib:validate(ReqData, Ctx, [nodename]).
-  %% {false, ReqData, Ctx}.
 
 resource_exists(ReqData, Ctx) ->
   {edts_resource_lib:exists_p(ReqData, Ctx, [nodename]), ReqData, Ctx}.

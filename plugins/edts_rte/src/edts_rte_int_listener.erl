@@ -28,14 +28,11 @@
 -export([start/0, stop/0, start_link/0]).
 
 -export([ interpret_modules/1
-        , interpret_node/1
-        , is_node_interpreted/0
         , is_module_interpreted/1
         , maybe_attach/1
         , set_breakpoint/3
         , step/0
         , uninterpret_modules/1
-        , uninterpret_node/0
         ]).
 
 %% gen_server callbacks
@@ -94,26 +91,6 @@ interpret_modules(Modules) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Make all loaded modules interpretable.
-%% Returns the list of modules which were
-%% interpretable and set as such.
-%% @end
--spec interpret_node(Exclusions :: [module()]) -> {ok, [module()]}.
-%%------------------------------------------------------------------------------
-interpret_node(Exclusions) ->
-  interpret_modules(get_safe_modules(Exclusions)).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Reports if code in the current project node is being interpreted.
-%% @end
--spec is_node_interpreted() -> boolean().
-%%------------------------------------------------------------------------------
-is_node_interpreted() ->
-  gen_server:call(?SERVER, is_node_interpreted).
-
-%%------------------------------------------------------------------------------
-%% @doc
 %% Reports if Module is interpreted.
 %% @end
 -spec is_module_interpreted(Module :: module()) -> boolean().
@@ -140,15 +117,6 @@ set_breakpoint(Module, Fun, Arity) ->
 %%------------------------------------------------------------------------------
 uninterpret_modules(Modules) ->
   gen_server:call(?SERVER, {uninterpret, Modules}).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Make all interpreted modules uninterpretable.
-%% @end
--spec uninterpret_node() -> {ok, [module()]}.
-%%------------------------------------------------------------------------------
-uninterpret_node() ->
-  uninterpret_modules(int:interpreted()).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -386,22 +354,6 @@ notify(Info, [Client|R]) ->
 %%------------------------------------------------------------------------------
 register_attached(Pid) ->
   gen_server:cast(?SERVER, {register_attached, Pid}).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Returns a list of all loaded modules except OTP modules and those
-%% explicitly belonging to ExcludedApps
-%%
--spec get_safe_modules(ExcludedApps :: [atom()]) -> [module()].
-%%------------------------------------------------------------------------------
-get_safe_modules(ExcludedApps) ->
-  ExcludedAppDirs = [code:lib_dir(App, ebin) || App <- ExcludedApps],
-  ErlLibDir = code:lib_dir(),
-  [Module || {Module, Filename} <- code:all_loaded(),
-             is_list(Filename),
-             not lists:prefix(ErlLibDir, Filename),
-             not code:is_module_native(Module),
-             not lists:member(filename:dirname(Filename), ExcludedAppDirs)].
 
 add_to_ulist(E, L) ->
   case lists:member(E, L) of
