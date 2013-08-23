@@ -82,10 +82,10 @@ process_post(ReqData, Ctx) ->
 from_json(ReqData, Ctx) ->
   Node        = orddict:fetch(nodename, Ctx),
   {Cmd, Args} = retrieve_cmd_and_args(ReqData),
-  io:format( "in from_json. Node:~p Command:~p Args:~p~n"
-           , [Node, Cmd, Args]),
+  edts_log:debug( "in from_json. Node:~p Command:~p Args:~p"
+                , [Node, Cmd, Args]),
   Info        = run_command(Cmd, Args, Node),
-  io:format("command info:~p~n", [Info]),
+  edts_log:debug("command info:~p", [Info]),
   Data    = encode_rte_info(Info),
   {true, wrq:set_resp_body(mochijson2:encode(Data), ReqData), Ctx}.
 
@@ -107,7 +107,7 @@ mk_convert_fun(_)                          ->
 to_json(ReqData, Ctx) ->
   Node    = orddict:fetch(nodename, Ctx),
   Command = orddict:fetch(cmd, Ctx),
-  io:format("cmd:~p~n", [Command]),
+  edts_log:debug("cmd:~p~n", [Command]),
   Info    = edts:Command(Node),
   Data    = encode_rte_info(Info),
   {mochijson2:encode(Data), ReqData, Ctx}.
