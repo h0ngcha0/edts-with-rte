@@ -51,6 +51,23 @@
                               (cdr (assoc 'message (cdr (assoc 'body res))))))))
     ))
 
+(defun uninterpret-module ()
+  "Un-interpret the current module"
+  (interactive)
+  (let* ((node       (edts-buffer-node-name))
+         (module     (ferl-get-module))
+         (resource   (list "plugins" "rte" node "cmd"))
+         (args       nil)
+         (body       (get-uninterpret-module-body module)))
+    (edts-log-info "RTE uninterpreting module: %s" module)
+    (let* ((res (edts-rest-post resource args body)))
+      (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
+          (null (edts-log-info "RTE: %s"
+                               (cdr (assoc 'message (cdr (assoc 'body res))))))
+        (null (edts-log-error "RTE: %s"
+                              (cdr (assoc 'message (cdr (assoc 'body res))))))))
+    ))
+
 (defun param-buffer ()
   "Return the name of the parameter buffer for the current node"
   (let* ((node (edts-buffer-node-name)))
@@ -104,6 +121,11 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
 (defun get-interpret-module-body (module)
   "Get the json body for the interpret-module rest request"
   (format "{\"cmd\": \"interpret_module\",\"args\": [\"%s\"]}" module)
+  )
+
+(defun get-uninterpret-module-body (module)
+  "Get the json body for the uninterpret-module rest request"
+  (format "{\"cmd\": \"uninterpret_module\",\"args\": [\"%s\"]}" module)
   )
 
 ;; find the mfa of the point
