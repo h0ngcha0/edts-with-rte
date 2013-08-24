@@ -18,55 +18,41 @@
 (defun edts-rte-run-with-args (arguments)
   "Run on function using rte_run"
   (interactive "sInput Arguments:")
-  (let* ((node       (edts-buffer-node-name))
-         (resource   (list "plugins" "rte" node "cmd"))
-         (args       nil)
-         (module     (car (find-mfa-under-point)))
+  (let* ((module     (car (find-mfa-under-point)))
          (function   (cadr (find-mfa-under-point)))
          (arity      (caddr (find-mfa-under-point)))
          (body       (get-rte-run-body module function arguments)))
     (ensure-args-saved arguments)
     (edts-log-info "RTE Running %s:%s/%s" module function arity)
-    (let* ((res (edts-rest-post resource args body)))
-      (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
-          (null (edts-log-info "RTE: %s"
-                               (cdr (assoc 'message (cdr (assoc 'body res))))))
-        (null (edts-log-error "RTE: %s"
-                              (cdr (assoc 'message (cdr (assoc 'body res))))))))))
+    (rte-rest-post body)
+    ))
 
 (defun interpret-module ()
   "Interpret the current module"
   (interactive)
-  (let* ((node       (edts-buffer-node-name))
-         (module     (ferl-get-module))
-         (resource   (list "plugins" "rte" node "cmd"))
-         (args       nil)
+  (let* ((module     (ferl-get-module))
          (body       (get-interpret-module-body module)))
     (edts-log-info "RTE interpreting module: %s" module)
-    (let* ((res (edts-rest-post resource args body)))
-      (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
-          (null (edts-log-info "RTE: %s"
-                               (cdr (assoc 'message (cdr (assoc 'body res))))))
-        (null (edts-log-error "RTE: %s"
-                              (cdr (assoc 'message (cdr (assoc 'body res))))))))
+    (rte-rest-post body)
     ))
 
 (defun uninterpret-module ()
   "Un-interpret the current module"
   (interactive)
-  (let* ((node       (edts-buffer-node-name))
-         (module     (ferl-get-module))
-         (resource   (list "plugins" "rte" node "cmd"))
-         (args       nil)
+  (let* ((module     (ferl-get-module))
          (body       (get-uninterpret-module-body module)))
     (edts-log-info "RTE uninterpreting module: %s" module)
-    (let* ((res (edts-rest-post resource args body)))
+    (rte-rest-post body)))
+
+(defun rte-rest-post (body)
+  (let* ((node     (edts-buffer-node-name))
+         (resource (list "plugins" "rte" node "cmd"))
+         (res      (edts-rest-post resource nil body)))
       (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
           (null (edts-log-info "RTE: %s"
                                (cdr (assoc 'message (cdr (assoc 'body res))))))
         (null (edts-log-error "RTE: %s"
-                              (cdr (assoc 'message (cdr (assoc 'body res))))))))
-    ))
+                              (cdr (assoc 'message (cdr (assoc 'body res)))))))))
 
 (defun param-buffer ()
   "Return the name of the parameter buffer for the current node"
