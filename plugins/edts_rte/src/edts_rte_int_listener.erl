@@ -177,16 +177,15 @@ handle_call( {attach, Pid}, _From
   {reply, {error, {already_attached, Listener, Pid}}, State};
 
 handle_call({interpret, Module}, _From, State) ->
-  Reply = try
-            case int:interpretable(Module) of
-              true ->
-                {module, Name} = int:i(Module),
-                {ok, Name};
-              _    ->
-                {error, unable_to_interpret_module}
-            end
-          catch
-            _:_ -> {error, unable_to_interpret_module}
+  InfoMsgFun = fun() ->
+                   list_to_atom(string:concat( atom_to_list(Module)
+                                             , " already interpreted"))
+               end,
+  Reply = case is_interpreted(Module) of
+            true  ->
+              {ok, InfoMsgFun()};
+            false ->
+              interpret(Module)
           end,
   {reply, Reply, State#listener_state{interpretation = true}};
 
@@ -203,7 +202,7 @@ handle_call({uninterpret, Module}, _From, State) ->
   {reply, {ok, uninterpreted}, State#listener_state{interpretation = false}};
 
 handle_call({is_interpreted, Module}, _From, State) ->
-  {reply, lists:member(Module, int:interpreted()), State};
+  {reply, is_interpreted(Module), State};
 
 handle_call(_Cmd, _From, #listener_state{proc = unattached} = State) ->
   {reply, {error, unattached}, State};
@@ -324,6 +323,26 @@ do_attach_pid(Pid) ->
   int:attached(Pid),
   edts_rte_app:debug("rte listener ~p attached to ~p~n", [self(), Pid]),
   ok.
+
+is_interpreted(Module) ->
+  lists:member(Module, int:interpreted()).
+
+interpret(Module) ->
+  ModStr    = atom_to_list(Module),
+  ErrMsgFun = fun() ->
+                  list_to_atom(string:concat("unable to interpret ", ModStr))
+              end,
+  try
+    case int:interpretable(Module) of
+      true ->
+        {module, Module} = int:i(Module),
+        {ok, list_to_atom(string:concat(ModStr, " interpreted"))};
+      _    ->
+        {error, ErrMsgFun()}
+    end
+  catch
+    _:_ -> {error, ErrMsgFun()}
+  end.
 
 %%------------------------------------------------------------------------------
 %% @doc

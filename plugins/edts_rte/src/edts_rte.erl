@@ -42,13 +42,7 @@ rte_run(Node, Module, Func, Args) ->
   dist_call(Node, edts_rte_server, rte_run, [Module, Func, Args]).
 
 interpret_module(Node, Module) ->
-  case dist_call(Node, edts_rte_int_listener, interpret_module, [Module]) of
-    {ok, Module} ->
-      Msg = list_to_atom(string:concat(atom_to_list(Module), " interpreted")),
-      {ok, Msg};
-    Error        ->
-      Error
-  end.
+  dist_call(Node, edts_rte_int_listener, interpret_module, [Module]).
 
 uninterpret_module(Node, Module) ->
   dist_call(Node, edts_rte_int_listener, uninterpret_module, [Module]).
