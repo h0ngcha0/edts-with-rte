@@ -273,9 +273,9 @@ read_record_definition(Module, RcdTbl) ->
 
 %% @doc interpret the current module
 interpret_current_module(Module) ->
-  case edts_rte_int_listener:interpret_modules([Module]) of
-    [Module] -> ok;
-    []       -> {error, unable_to_interpret_module}
+  case edts_rte_int_listener:interpret_module(Module) of
+    {ok, Module}        -> ok;
+    {error, _Rsn} = Err -> Err
   end.
 
 %% @doc set the break point at the beginning of the function

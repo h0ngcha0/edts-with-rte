@@ -24,15 +24,32 @@
          (module     (car (find-mfa-under-point)))
          (function   (cadr (find-mfa-under-point)))
          (arity      (caddr (find-mfa-under-point)))
-         (body       (get_rte_run_body module function arguments)))
+         (body       (get-rte-run-body module function arguments)))
     (ensure-args-saved arguments)
     (edts-log-info "RTE Running %s:%s/%s" module function arity)
     (let* ((res (edts-rest-post resource args body)))
       (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
-          (null (edts-log-info "RTE Info: %s"
+          (null (edts-log-info "RTE: %s"
                                (cdr (assoc 'message (cdr (assoc 'body res))))))
-        (null (edts-log-error "RTE Error: %s"
+        (null (edts-log-error "RTE: %s"
                               (cdr (assoc 'message (cdr (assoc 'body res))))))))))
+
+(defun interpret-module ()
+  "Interpret the current module"
+  (interactive)
+  (let* ((node       (edts-buffer-node-name))
+         (module     (ferl-get-module))
+         (resource   (list "plugins" "rte" node "cmd"))
+         (args       nil)
+         (body       (get-interpret-module-body module)))
+    (edts-log-info "RTE interpreting module: %s" module)
+    (let* ((res (edts-rest-post resource args body)))
+      (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
+          (null (edts-log-info "RTE: %s"
+                               (cdr (assoc 'message (cdr (assoc 'body res))))))
+        (null (edts-log-error "RTE: %s"
+                              (cdr (assoc 'message (cdr (assoc 'body res))))))))
+    ))
 
 (defun param-buffer ()
   "Return the name of the parameter buffer for the current node"
@@ -79,9 +96,14 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
 (replace-regexp-in-string "\\`[ \t\n]*" "" (replace-regexp-in-string "[ \t\n]*\\'" "" string))
 )
 
-(defun get_rte_run_body(module function args)
-  "Get the json body for rte_run rest request"
+(defun get-rte-run-body(module function args)
+  "Get the json body for rte-run rest request"
   (format "{\"cmd\": \"rte_run\",\"args\": [\"%s\",\"%s\", \"%s\"]}" module function args)
+  )
+
+(defun get-interpret-module-body (module)
+  "Get the json body for the interpret-module rest request"
+  (format "{\"cmd\": \"interpret_module\",\"args\": [\"%s\"]}" module)
   )
 
 ;; find the mfa of the point

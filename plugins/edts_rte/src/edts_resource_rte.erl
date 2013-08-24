@@ -107,6 +107,7 @@ to_json(ReqData, Ctx) ->
   Command = orddict:fetch(cmd, Ctx),
   edts_log:debug("cmd:~p~n", [Command]),
   Info    = edts:Command(Node),
+  edts_log:debug("return from cmd:~p~n", [Info]),
   Data    = encode_rte_info(Info),
   {mochijson2:encode(Data), ReqData, Ctx}.
 

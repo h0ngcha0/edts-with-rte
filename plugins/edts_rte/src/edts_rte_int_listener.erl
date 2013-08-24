@@ -27,12 +27,12 @@
 %% server API
 -export([start/0, stop/0, start_link/0]).
 
--export([ interpret_modules/1
+-export([ interpret_module/1
         , is_module_interpreted/1
         , maybe_attach/1
         , set_breakpoint/3
         , step/0
-        , uninterpret_modules/1
+        , uninterpret_module/1
         ]).
 
 %% gen_server callbacks
@@ -81,13 +81,13 @@ maybe_attach(Pid) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Make Modules interpretable. Returns the list of modules which were
-%% interpretable and set as such.
+%% Interpret the module. Return ok if the module is interpreted, otherwise
+%% return error message.
 %% @end
--spec interpret_modules(Modules :: [module()]) -> {ok, [module()]}.
+-spec interpret_module(Module :: module()) -> {ok, module()} | {error, atom()}.
 %%------------------------------------------------------------------------------
-interpret_modules(Modules) ->
-  gen_server:call(?SERVER, {interpret, Modules}).
+interpret_module(Module) ->
+  gen_server:call(?SERVER, {interpret, Module}).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -111,12 +111,12 @@ set_breakpoint(Module, Fun, Arity) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Uninterprets Modules.
+%% Uninterpret Module.
 %% @end
--spec uninterpret_modules(Modules :: [module()]) -> ok.
+-spec uninterpret_module(Module :: module()) -> ok.
 %%------------------------------------------------------------------------------
-uninterpret_modules(Modules) ->
-  gen_server:call(?SERVER, {uninterpret, Modules}).
+uninterpret_module(Module) ->
+  gen_server:call(?SERVER, {uninterpret, Module}).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -176,19 +176,18 @@ handle_call( {attach, Pid}, _From
   edts_rte_app:debug("in hancle_call, already attach, Pid:~p~n", [Pid]),
   {reply, {error, {already_attached, Listener, Pid}}, State};
 
-handle_call({interpret, Modules}, _From, State) ->
-  Reply = lists:filter(fun(E) -> E =/= mod_uninterpretable end,
-                       lists:map(fun(Module) ->
-                                     try
-                                       case int:interpretable(Module) of
-                                         true -> {module, Name} = int:i(Module),
-                                                 Name;
-                                         _    -> mod_uninterpretable
-                                       end
-                                     catch
-                                       _:_ -> mod_uninterpretable
-                                     end
-                                 end, Modules)),
+handle_call({interpret, Module}, _From, State) ->
+  Reply = try
+            case int:interpretable(Module) of
+              true ->
+                {module, Name} = int:i(Module),
+                {ok, Name};
+              _    ->
+                {error, unable_to_interpret_module}
+            end
+          catch
+            _:_ -> {error, unable_to_interpret_module}
+          end,
   {reply, Reply, State#listener_state{interpretation = true}};
 
 handle_call({set_breakpoint, Module, Fun, Arity}, _From, State) ->
@@ -199,16 +198,12 @@ handle_call({set_breakpoint, Module, Fun, Arity}, _From, State) ->
           end,
   {reply, Reply, State};
 
-handle_call({uninterpret, Modules}, _From, State) ->
-  lists:map(fun(Module) -> int:n(Module) end, Modules),
+handle_call({uninterpret, Module}, _From, State) ->
+  int:n(Module),
   {reply, {ok, uninterpreted}, State#listener_state{interpretation = false}};
 
 handle_call({is_interpreted, Module}, _From, State) ->
   {reply, lists:member(Module, int:interpreted()), State};
-
-handle_call(is_node_interpreted, _From,
-            #listener_state{interpretation = Value} = State) ->
-  {reply, Value, State};
 
 handle_call(_Cmd, _From, #listener_state{proc = unattached} = State) ->
   {reply, {error, unattached}, State};
