@@ -177,17 +177,9 @@ handle_call( {attach, Pid}, _From
   {reply, {error, {already_attached, Listener, Pid}}, State};
 
 handle_call({interpret, Module}, _From, State) ->
-  InfoMsgFun = fun() ->
-                   list_to_atom(string:concat( atom_to_list(Module)
-                                             , " already interpreted"))
-               end,
-  Reply = case is_interpreted(Module) of
-            true  ->
-              {ok, InfoMsgFun()};
-            false ->
-              interpret(Module)
-          end,
-  {reply, Reply, State#listener_state{interpretation = true}};
+  %% Can not check if the module is already interpreted using is_interpreted/1
+  %% because even if it returns true, breakpoint wont be hit.
+  {reply, interpret(Module), State#listener_state{interpretation = true}};
 
 handle_call({set_breakpoint, Module, Fun, Arity}, _From, State) ->
   Reply = case int:break_in(Module, Fun, Arity) of
@@ -198,8 +190,14 @@ handle_call({set_breakpoint, Module, Fun, Arity}, _From, State) ->
   {reply, Reply, State};
 
 handle_call({uninterpret, Module}, _From, State) ->
-  int:n(Module),
-  {reply, {ok, uninterpreted}, State#listener_state{interpretation = false}};
+  Reply = case is_interpreted(Module) of
+            true  ->
+              int:n(Module),
+              {ok, make_return_message(Module, " uninterpreted")};
+            false ->
+              {error, make_return_message(Module, " is not interpreted")}
+          end,
+  {reply, Reply, State#listener_state{interpretation = false}};
 
 handle_call({is_interpreted, Module}, _From, State) ->
   {reply, is_interpreted(Module), State};
@@ -328,21 +326,20 @@ is_interpreted(Module) ->
   lists:member(Module, int:interpreted()).
 
 interpret(Module) ->
-  ModStr    = atom_to_list(Module),
-  ErrMsgFun = fun() ->
-                  list_to_atom(string:concat("unable to interpret ", ModStr))
-              end,
   try
     case int:interpretable(Module) of
       true ->
         {module, Module} = int:i(Module),
-        {ok, list_to_atom(string:concat(ModStr, " interpreted"))};
+        {ok, make_return_message(Module, " interpreted")};
       _    ->
-        {error, ErrMsgFun()}
+        {error, make_return_message(Module, " can not be interpreted")}
     end
   catch
-    _:_ -> {error, ErrMsgFun()}
+    _:_ -> {error, make_return_message(Module, " can not be interpreted")}
   end.
+
+make_return_message(Module, Msg) ->
+  list_to_atom(string:concat(atom_to_list(Module), Msg)).
 
 %%------------------------------------------------------------------------------
 %% @doc
