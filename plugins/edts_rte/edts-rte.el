@@ -52,6 +52,13 @@
     (edts-rte-log-info "Update the record definitions: %s" module)
     (rte-rest-post body)))
 
+(defun edts-rte-list-stored-record-names ()
+  "List the name of all the record that are stored by RTE"
+  (interactive)
+  (let* ((body (get-list-record-names-body)))
+    (edts-rte-log-info "List all the record definitions...")
+    (rte-rest-post body)))
+
 (defun rte-rest-post (body)
   (let* ((node     (edts-buffer-node-name))
          (resource (list "plugins" "rte" node "cmd"))
@@ -121,6 +128,10 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
 (defun get-update-record-defs-body (module)
   "Get the json body for the update-record-defs rest request"
   (format "{\"cmd\": \"update_record_defs\",\"args\": [\"%s\"]}" module))
+
+(defun get-list-record-names-body ()
+  "Get the json body for the list-record-defs rest request"
+  (format "{\"cmd\": \"list_record_names\",\"args\": []}"))
 
 ;; find the mfa of the point
 (defun find-mfa-under-point ()

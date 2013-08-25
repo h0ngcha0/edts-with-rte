@@ -37,6 +37,7 @@
 %% APIs for the int listener
 -export([ break_at/1
         , finished_attach/1
+        , list_record_names/0
         , read_and_add_records/1
         , rte_run/3
         , send_exit/0
@@ -66,7 +67,6 @@
                    , mfa_info_tree         = []         :: list()  %% FIXME type
                    , module_cache          = []         :: list()  %% FIXME type
                    , proc                  = unattached :: unattached | pid()
-                   , record_table          = undefined  :: atom()
                    , result                = undefined  :: term()
                    }).
 
@@ -118,6 +118,14 @@ update_record_defs(Module) ->
   gen_server:call(?SERVER, {update_record_defs, Module}).
 
 %%------------------------------------------------------------------------------
+%% @doc
+%% List the definition of all the records that are stored in RTE
+%% Return a list of the records the definition of which are stored.
+-spec list_record_names() -> {ok, [term()]}.
+list_record_names() ->
+  gen_server:call(?SERVER, list_record_names).
+
+%%------------------------------------------------------------------------------
 %% @doc Used by int listener to tell edts_rte_server that it has attached
 %%      to the process that executes the rte function.
 -spec finished_attach(pid()) -> ok.
@@ -163,11 +171,12 @@ init([]) ->
   %% records in erlang are purely syntactic sugar. create a table to store the
   %% mapping between records and their definitions.
   %% set the table to public to make debugging easier
-  RcdTbl = ets:new(edts_rte_util:record_table_name(), [public, named_table]),
-  {ok, #rte_state{record_table = RcdTbl}}.
+  RcdTbl = edts_rte_util:record_table_name(),
+  RcdTbl = ets:new(RcdTbl, [public, named_table]),
+  {ok, #rte_state{}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
-  RcdTbl   = State#rte_state.record_table,
+  RcdTbl   = edts_rte_util:record_table_name(),
   Args     = binary_to_list(Args0),
   ArgsTerm = edts_rte_util:convert_list_to_term(Args, RcdTbl),
   Arity    = length(ArgsTerm),
@@ -176,7 +185,7 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
 
   %% try to read the record from the current module.. right now this is the
   %% only record support
-  Res = exec([ fun() -> read_record_definition(Module, RcdTbl) end
+  Res = exec([ fun() -> update_record_definition(Module) end
              , fun() -> interpret_current_module(Module) end
              , fun() -> set_breakpoint_beg(Module, Fun, Arity) end
              , fun() -> run_mfa(Module, Fun, ArgsTerm) end]),
@@ -199,7 +208,10 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
       {reply, {error, Rsn}, State}
   end;
 handle_call({update_record_defs, Module}, _From, State) ->
-  Reply = read_record_definition(Module, State#rte_state.record_table),
+  Reply = update_record_definition(Module),
+  {reply, Reply, State};
+handle_call(list_record_names, _From, State) ->
+  Reply = list_stored_record_names(),
   {reply, Reply, State}.
 
 %%------------------------------------------------------------------------------
@@ -279,10 +291,17 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%%_* Internal =================================================================
 %% @doc Read and store the record definitions from the specified module.
-read_record_definition(Module, RcdTbl) ->
+update_record_definition(Module) ->
+  RcdTbl   = edts_rte_util:record_table_name(),
   AddedRds = edts_rte_util:read_and_add_records(Module, RcdTbl),
   edts_rte_app:debug("added record definitions:~p~n", [AddedRds]),
   {ok, AddedRds}.
+
+%% @doc Read the names of all the record stored in RTE
+list_stored_record_names() ->
+  Reply = lists:map( fun(Record) -> element(1, Record) end
+                   , ets:tab2list(edts_rte_util:record_table_name())),
+  {ok, Reply}.
 
 %% @doc interpret the current module
 interpret_current_module(Module) ->

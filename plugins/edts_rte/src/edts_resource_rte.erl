@@ -137,7 +137,9 @@ run_command(interpret_module, [Module], Node)   ->
 run_command(uninterpret_module, [Module], Node) ->
   edts_rte:uninterpret_module(Node, Module);
 run_command(update_record_defs, [Module], Node) ->
-  edts_rte:update_record_defs(Node, Module).
+  edts_rte:update_record_defs(Node, Module);
+run_command(list_record_names, [], Node)         ->
+  edts_rte:list_record_names(Node).
 
 %%%_* Unit tests ===============================================================
 init_test() ->
