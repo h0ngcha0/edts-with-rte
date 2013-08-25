@@ -199,8 +199,8 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
       {reply, {error, Rsn}, State}
   end;
 handle_call({update_record_defs, Module}, _From, State) ->
-  ok = read_record_definition(Module, State#rte_state.record_table),
-  {reply, {ok, defs_read}, State}.
+  Reply = read_record_definition(Module, State#rte_state.record_table),
+  {reply, Reply, State}.
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -282,7 +282,7 @@ code_change(_OldVsn, State, _Extra) ->
 read_record_definition(Module, RcdTbl) ->
   AddedRds = edts_rte_util:read_and_add_records(Module, RcdTbl),
   edts_rte_app:debug("added record definitions:~p~n", [AddedRds]),
-  ok.
+  {ok, AddedRds}.
 
 %% @doc interpret the current module
 interpret_current_module(Module) ->
