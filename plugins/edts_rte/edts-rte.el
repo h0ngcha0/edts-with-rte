@@ -44,6 +44,14 @@
     (edts-rte-log-info "Uninterpreting module: %s" module)
     (rte-rest-post body)))
 
+(defun edts-rte-update-record-defs ()
+  "Update the record definitions"
+  (interactive)
+  (let* ((module     (ferl-get-module))
+         (body       (get-update-record-defs-body module)))
+    (edts-rte-log-info "Update the record definitions: %s" module)
+    (rte-rest-post body)))
+
 (defun rte-rest-post (body)
   (let* ((node     (edts-buffer-node-name))
          (resource (list "plugins" "rte" node "cmd"))
@@ -109,6 +117,10 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
 (defun get-uninterpret-module-body (module)
   "Get the json body for the uninterpret-module rest request"
   (format "{\"cmd\": \"uninterpret_module\",\"args\": [\"%s\"]}" module))
+
+(defun get-update-record-defs-body (module)
+  "Get the json body for the update-record-defs rest request"
+  (format "{\"cmd\": \"update_record_defs\",\"args\": [\"%s\"]}" module))
 
 ;; find the mfa of the point
 (defun find-mfa-under-point ()

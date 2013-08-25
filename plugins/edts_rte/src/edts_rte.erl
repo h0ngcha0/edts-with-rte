@@ -29,6 +29,7 @@
 -export([ interpret_module/2
         , rte_run/4
         , uninterpret_module/2
+        , update_record_defs/2
         ]).
 
 %% Behaviour exports
@@ -46,6 +47,9 @@ interpret_module(Node, Module) ->
 
 uninterpret_module(Node, Module) ->
   dist_call(Node, edts_rte_int_listener, uninterpret_module, [Module]).
+
+update_record_defs(Node, Module) ->
+  dist_call(Node, edts_rte_server, update_record_defs, [Module]).
 
 %% Behaviour callbacks
 edts_server_services()  -> [].

@@ -40,6 +40,7 @@
         , read_and_add_records/1
         , rte_run/3
         , send_exit/0
+        , update_record_defs/1
         ]).
 
 %% gen_server callbacks
@@ -107,6 +108,14 @@ start_link() ->
 %%------------------------------------------------------------------------------
 rte_run(Module, Fun, Args) ->
   gen_server:call(?SERVER, {rte_run, Module, Fun, Args}).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Update the record definition table.
+%% Return a list of the records the definition of which are stored.
+-spec update_record_defs(Module::module()) -> {ok, [term()]}.
+update_record_defs(Module) ->
+  gen_server:call(?SERVER, {update_record_defs, Module}).
 
 %%------------------------------------------------------------------------------
 %% @doc Used by int listener to tell edts_rte_server that it has attached
@@ -188,7 +197,10 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
       {reply, {ok, finished}, State1};
     {error, Rsn} ->
       {reply, {error, Rsn}, State}
-  end.
+  end;
+handle_call({update_record_defs, Module}, _From, State) ->
+  ok = read_record_definition(Module, State#rte_state.record_table),
+  {reply, {ok, defs_read}, State}.
 
 %%------------------------------------------------------------------------------
 %% @private
