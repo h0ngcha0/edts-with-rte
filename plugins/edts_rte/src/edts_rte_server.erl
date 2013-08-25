@@ -37,6 +37,7 @@
 %% APIs for the int listener
 -export([ break_at/1
         , finished_attach/1
+        , forget_record_defs/1
         , list_record_names/0
         , read_and_add_records/1
         , rte_run/3
@@ -126,6 +127,13 @@ list_record_names() ->
   gen_server:call(?SERVER, list_record_names).
 
 %%------------------------------------------------------------------------------
+%% @doc
+%% Remove a record from the record definition table.
+-spec forget_record_defs(RecordName :: atom()) -> {ok, [term()]}.
+forget_record_defs(RecordName) ->
+  gen_server:call(?SERVER, {forget_record_defs, RecordName}).
+
+%%------------------------------------------------------------------------------
 %% @doc Used by int listener to tell edts_rte_server that it has attached
 %%      to the process that executes the rte function.
 -spec finished_attach(pid()) -> ok.
@@ -212,6 +220,23 @@ handle_call({update_record_defs, Module}, _From, State) ->
   {reply, Reply, State};
 handle_call(list_record_names, _From, State) ->
   Reply = list_stored_record_names(),
+  {reply, Reply, State};
+handle_call({forget_record_defs, ''}, _From, State) ->
+  %% if user didn't specify a record name, delete all the entries from
+  %% the record definition table.
+  true = ets:delete_all_objects(edts_rte_util:record_table_name()),
+  Msg  = make_record_return_message('all records', " are forgotten"),
+  {reply, {ok, Msg}, State};
+handle_call({forget_record_defs, RecordName}, _From, State) ->
+  Reply =
+    case ets:lookup(edts_rte_util:record_table_name(), RecordName) of
+      [] ->
+        io:format("recordname:~p~n", [RecordName]),
+        {error, make_record_return_message(RecordName, " is not stored")};
+      [_RecordDef] ->
+        ets:delete(edts_rte_util:record_table_name(), RecordName),
+        {ok, make_record_return_message(RecordName, " is forgotten")}
+    end,
   {reply, Reply, State}.
 
 %%------------------------------------------------------------------------------
@@ -339,6 +364,10 @@ lift(F) ->
     {error, Rsn} -> {error, Rsn};
     Rsn          -> {ok, Rsn}
   end.
+
+%% @doc Make a return message for record related APIs
+make_record_return_message(RecordName, Msg) ->
+  list_to_atom(string:concat(atom_to_list(RecordName), Msg)).
 
 %%------------------------------------------------------------------------------
 %% @doc Send the rte result to the rte server.

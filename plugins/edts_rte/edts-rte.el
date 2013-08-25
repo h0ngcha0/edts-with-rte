@@ -52,6 +52,16 @@
     (edts-rte-log-info "Update the record definitions: %s" module)
     (rte-rest-post body)))
 
+(defun edts-rte-forget-record-defs (record-name)
+  "Make RTE forget a particular record definition, if not specified
+then forget all"
+  (interactive "sInput Arguments:")
+  (let* ((body (get-forget-record-defs-body record-name)))
+    (if (eq "" record-name)
+        (edts-rte-log-info "Forget the record definitions of %s" record-name)
+      (edts-rte-log-info "Forget all the record definitions"))
+    (rte-rest-post body)))
+
 (defun edts-rte-list-stored-record-names ()
   "List the name of all the record that are stored by RTE"
   (interactive)
@@ -132,6 +142,10 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
 (defun get-list-record-names-body ()
   "Get the json body for the list-record-defs rest request"
   (format "{\"cmd\": \"list_record_names\",\"args\": []}"))
+
+(defun get-forget-record-defs-body (record-name)
+  "Get the json body for the forget-record-defs rest request"
+  (format "{\"cmd\": \"forget_record_defs\",\"args\": [\"%s\"]}" record-name))
 
 ;; find the mfa of the point
 (defun find-mfa-under-point ()
