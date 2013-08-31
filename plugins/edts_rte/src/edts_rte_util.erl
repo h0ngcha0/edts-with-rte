@@ -592,10 +592,14 @@ replace_var_with_val_in_expr({op, L, Ops, LExpr0, RExpr0}, ECLn, Bs)      ->
   LExpr = replace_var_with_val_in_expr(LExpr0, ECLn, Bs),
   RExpr = replace_var_with_val_in_expr(RExpr0, ECLn, Bs),
   {op, L, Ops, LExpr, RExpr};
-replace_var_with_val_in_expr( {call, L, {atom, L, F0}, ArgList0}
+replace_var_with_val_in_expr( {call, L, {atom, L, F0}, ArgList}
                             , ECLn, Bs)                                   ->
   F = replace_var_with_val_in_expr(F0, ECLn, Bs),
-  {call, L, {atom, L, F}, replace_var_with_val_in_exprs(ArgList0, ECLn, Bs)};
+  {call, L, {atom, L, F}, replace_var_with_val_in_exprs(ArgList, ECLn, Bs)};
+replace_var_with_val_in_expr( {call, L, {var, L, _} = FunName, ArgList}
+                            , ECLn, Bs)                                   ->
+  FunVal = replace_var_with_val_in_expr(FunName, ECLn, Bs),
+  {call, L, FunVal, replace_var_with_val_in_exprs(ArgList, ECLn, Bs)};
 replace_var_with_val_in_expr( {call, L, {remote, L, M0, F0}, Args0}
                             , ECLn, Bs)                                   ->
   M = replace_var_with_val_in_expr(M0, ECLn, Bs),
