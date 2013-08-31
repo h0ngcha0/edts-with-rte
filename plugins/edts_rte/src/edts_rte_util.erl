@@ -654,10 +654,10 @@ replace_var_with_val({var, L, VariableName}, Bs) ->
 replace_var_with_val(Other, _Bs)                 ->
   Other.
 
-do_replace(VarName, Value, L) ->
-  ReplacedStr      = make_replaced_str(VarName, Value),
-  Tokens0          = get_tokens(ReplacedStr),
-  Tokens           = maybe_replace_pid(Tokens0, Value),
+do_replace(VarName, Value0, L) ->
+  Value       = maybe_convert_to_str(Value0),
+  ReplacedStr = make_replaced_str(VarName, Value),
+  Tokens      = get_tokens(ReplacedStr),
   {ok, [ValForm]}  = erl_parse:parse_exprs(Tokens),
   replace_line_num(ValForm, L).
 
@@ -669,24 +669,33 @@ get_tokens(ValStr) ->
   {ok, Tokens, _} = erl_scan:string(ValStr),
   Tokens.
 
-%% pid is displayed as atom instead. coz it is not a valid erlang term
-maybe_replace_pid(Tokens0, Value) ->
-  case is_pid_tokens(Tokens0) of
-    true  ->
-      ValStr0 = lists:flatten(io_lib:format("{__pid__, ~p}", [Value])),
-      edts_rte_app:debug("pid token:~p~n", [Tokens0]),
-      ValStr1 = re:replace(ValStr0, "\\.", ",", [{return, list}, global]),
-      ValStr2 = re:replace(ValStr1, "\\<", "{", [{return, list}, global]),
-      ValStr  = re:replace(ValStr2, "\\>", "}", [{return, list}, global]),
-      get_tokens(ValStr++".");
-    false ->
-      Tokens0
+%% @doc for values such as Pid and Func, which are not valid
+%%      erlang terms, convert them to atom and return back.
+maybe_convert_to_str(Value) ->
+  Str0   = lists:flatten(io_lib:format("~p", [Value])),
+  Str    = string:concat(Str0, "."),
+  Tokens = get_tokens(Str),
+  Spec   = [ {fun is_pid_tokens/1, "pid: "}
+           , {fun is_func_tokens/1, "fun: "}],
+  convert_with_spec(Spec, Value, Str0, Tokens).
+
+convert_with_spec([], Value, _Str, _Tokens)                            ->
+  Value;
+convert_with_spec([{Predicate, StrPrefix} | Rest], Value, Str, Tokens) ->
+  case Predicate(Tokens) of
+    true  -> string:concat(StrPrefix,Str);
+    false -> convert_with_spec(Rest, Value, Str, Tokens)
   end.
 
 is_pid_tokens(Tokens) ->
   [FirstElem | _] = Tokens,
   [{dot, _}, LastElem | _] = lists:reverse(Tokens),
   is_left_arrow(FirstElem) andalso is_right_arrow(LastElem).
+
+is_func_tokens([{'#', _}, {var, _, 'Fun'} | _Rest]) ->
+  true;
+is_func_tokens(_) ->
+  false.
 
 is_left_arrow({Char, _}) when Char =:= '<' ->
   true;
