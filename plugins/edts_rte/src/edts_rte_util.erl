@@ -27,6 +27,7 @@
 -export([ convert_list_to_term/2
         , expand_records/2
         , extract_fun_clauses_line_num/1
+        , get_function_abscode/3
         , get_module_sorted_fun_info/1
         , is_tail_call/3
         , read_and_add_records/2
@@ -182,6 +183,41 @@ touch_clause(ClauseStruct, Line) ->
 
 read_and_add_records(Module, RT) ->
   read_and_add_records(Module, '_', [], [], RT).
+
+%% @doc get the abstract code of a function. support anonymous
+%%      function as well
+get_function_abscode(Module, Function, Arity) ->
+  case is_lambda(Function) of
+    false ->
+      edts_code:get_function_abscode(Module, Function, Arity);
+    {true, FatherFun, FatherArity, DefSeq}  ->
+      get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq)
+  end.
+
+-spec is_lambda(Function) -> {true, function(), arity(), integer()} | false.
+is_lambda(Function) ->
+  FuncStr = atom_to_list(Function),
+  case re:run(FuncStr, "-(.*)/(.*)-fun-(.*)-", [{capture, [1,2,3], list}]) of
+    {match, [FatherFunStr, FatherArityStr, DefinedSeq] = } ->
+      {true, list_to_atom(FatherFunStr),
+             list_to_integer(FatherArityStr),
+             list_to_integer(DefinedSeq)}};
+    nomatch ->
+      false
+  end.
+
+get_lambda_abscode(Module, Function, Arity, DefSeq) ->
+  {ok, FunAbsForm}    = edts_code:get_function_abscode(Module, Function, Arity),
+  get_lambda_from_fun(FunAbsForm, DefSeq).
+
+extract_lambda_abscode_from_fun({function, _L, Name, Arity, Clauses}) ->
+  lists:map(fun extract_lambda_abscode_from_clause/1, Clauses).
+
+extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
+  lists:map(fun extract_lambda_abscode_from_exprs/1, Exprs).
+
+extract_lambda_abscode_from_exprs() ->
+  not_implemented.
 
 get_module_sorted_fun_info(M) ->
   FunAritys = int:functions(M),
