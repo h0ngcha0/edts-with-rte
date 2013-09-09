@@ -191,33 +191,55 @@ get_function_abscode(Module, Function, Arity) ->
     false ->
       edts_code:get_function_abscode(Module, Function, Arity);
     {true, FatherFun, FatherArity, DefSeq}  ->
-      get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq)
+      io:format("fun:~p, arity:~p, defseq:~p~n"
+                , [FatherFun, FatherArity, DefSeq]),
+      Res = get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq),
+      io:format("lambda abscode:~p~n", [Res])
   end.
 
--spec is_lambda(Function) -> {true, function(), arity(), integer()} | false.
+%% @doc if an atom is the name of an anonymous function. the format is like
+%%      the following:
+%%      "-Funname/Arity-fun-N-"
+%%      where Funname is the name of the function, Arity is the number of
+%%      the arguments the function would take and N is the sequence of the
+%%      anonymous function defined in Funname.
+-spec is_lambda(Function :: atom()) ->
+                   {true, function(), arity(), integer()} | false.
 is_lambda(Function) ->
   FuncStr = atom_to_list(Function),
   case re:run(FuncStr, "-(.*)/(.*)-fun-(.*)-", [{capture, [1,2,3], list}]) of
-    {match, [FatherFunStr, FatherArityStr, DefinedSeq] = } ->
+    {match, [FatherFunStr, FatherArityStr, DefinedSeq]} ->
       {true, list_to_atom(FatherFunStr),
              list_to_integer(FatherArityStr),
-             list_to_integer(DefinedSeq)}};
+             list_to_integer(DefinedSeq)};
     nomatch ->
       false
   end.
 
-get_lambda_abscode(Module, Function, Arity, DefSeq) ->
-  {ok, FunAbsForm}    = edts_code:get_function_abscode(Module, Function, Arity),
-  get_lambda_from_fun(FunAbsForm, DefSeq).
+get_lambda_abscode(Module, Function, Arity, _DefSeq) ->
+  {ok, FunAbsForm} = edts_code:get_function_abscode(Module, Function, Arity),
+  extract_lambda_abscode_from_fun(FunAbsForm).
 
-extract_lambda_abscode_from_fun({function, _L, Name, Arity, Clauses}) ->
-  lists:map(fun extract_lambda_abscode_from_clause/1, Clauses).
+extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
+  compact(lists:map(fun extract_lambda_abscode_from_clause/1, Clauses)).
 
 extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
-  lists:map(fun extract_lambda_abscode_from_exprs/1, Exprs).
+  compact(lists:map(fun extract_lambda_abscode_from_expr/1, Exprs)).
 
-extract_lambda_abscode_from_exprs() ->
-  not_implemented.
+extract_lambda_abscode_from_expr({match, _L, _LExpr0, RExpr0}) ->
+  extract_lambda_abscode_from_expr(RExpr0);
+extract_lambda_abscode_from_expr({'fun', _L, {clauses, Clauses}} = AbsCode) ->
+  [AbsCode|lists:map(fun extract_lambda_abscode_from_clause/1, Clauses)];
+extract_lambda_abscode_from_expr(_) ->
+  [].
+
+compact([]) ->
+  [];
+compact([H|T]) when H =:= '' orelse H =:= [] ->
+  compact(T);
+compact([H|T]) ->
+  [H|compact(T)].
+
 
 get_module_sorted_fun_info(M) ->
   FunAritys = int:functions(M),

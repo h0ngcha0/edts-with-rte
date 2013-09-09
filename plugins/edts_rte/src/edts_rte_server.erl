@@ -524,11 +524,11 @@ set_current_false([MFAInfo|T]) ->
 %% @doc Create a new mfa_info element
 -spec new_mfa_info(module(), function(), arity(), depth(), line(), bindings())
                   -> mfa_info().
-new_mfa_info(Module, Function, Arity, Depth, Line, Bindings) ->
-  {ok, FunAbsForm} = edts_code:get_function_abscode(Module, Function, Arity),
+new_mfa_info(Module, Func, Arity, Depth, Line, Bindings) ->
+  {ok, FunAbsForm} = edts_rte_util:get_function_abscode(Module, Func, Arity),
   AllClausesL0     = edts_rte_util:extract_fun_clauses_line_num(FunAbsForm),
   AllClausesL      = edts_rte_util:traverse_clause_struct(Line, AllClausesL0),
-  #mfa_info{ key            = {Module, Function, Arity, Depth}
+  #mfa_info{ key            = {Module, Func, Arity, Depth}
            , line           = Line
            , fun_form       = FunAbsForm
            , clause_structs = AllClausesL
