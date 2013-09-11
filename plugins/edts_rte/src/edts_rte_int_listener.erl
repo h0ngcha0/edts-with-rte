@@ -252,9 +252,12 @@ handle_cast(_Msg, State) ->
 %% Hit a breakpoint
 handle_info({Meta, {break_at, Module, Line, Depth}}, State) ->
   Bindings = int:meta(Meta, bindings, nostack),
+  %% get the top of the backtrace
+  {Depth, {Module, Func, Args}} = hd(int:meta(Meta, backtrace, all)),
+  Arity = length(Args),
   File = int:file(Module),
   notify({break, File, {Module, Line}, Depth, Bindings}),
-  edts_rte_server:break_at({Bindings, Module, Line, Depth}),
+  edts_rte_server:break_at({Bindings, {Module, Func, Arity}, Line, Depth}),
   {noreply, State};
 
 %% Became idle (not executing any code under debugging)

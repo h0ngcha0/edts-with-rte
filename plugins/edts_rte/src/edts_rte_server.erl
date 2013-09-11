@@ -66,7 +66,6 @@
 
 -record(rte_state, { exit_p                = false      :: boolean()
                    , mfa_info_tree         = []         :: list()  %% FIXME type
-                   , module_cache          = []         :: list()  %% FIXME type
                    , proc                  = unattached :: unattached | pid()
                    , result                = undefined  :: term()
                    }).
@@ -205,11 +204,10 @@ handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
                           , is_current = true
                           , children   = []
                           },
-      State1   = State#rte_state{ module_cache   = []
-                                , proc           = Pid
+      State1   = State#rte_state{ exit_p         = false
                                 , mfa_info_tree  = [MFAInfo]
+                                , proc           = Pid
                                 , result         = undefined
-                                , exit_p         = false
                                 },
       {reply, {ok, "Finished"}, State1};
     {error, Rsn} ->
@@ -265,20 +263,16 @@ handle_cast({finished_attach, Pid}, State) ->
   edts_rte_int_listener:step(),
   edts_rte_app:debug("finish attach.....~n"),
   {noreply, State};
-handle_cast({break_at, {Bindings, Module, Line, Depth}}, State0) ->
-  {MFA, State} = get_mfa(State0, Module, Line),
+handle_cast({break_at, {Bindings, MFA, Line, Depth}}, State) ->
   edts_rte_app:debug("1) send_binding.. before step. depth:~p~n", [Depth]),
   edts_rte_app:debug("2) send_binding.. Line:~p, Bindings:~p~n",
                      [Line, Bindings]),
-
   edts_rte_app:debug("3) new mfa:~p~n", [MFA]),
 
   NewMFAInfoTree = update_mfa_info_tree( MFA, Depth, Line, Bindings
                                        , State#rte_state.mfa_info_tree),
-
   %% continue to step
   edts_rte_int_listener:step(),
-
   {noreply, State#rte_state{mfa_info_tree = NewMFAInfoTree}};
 handle_cast(exit, #rte_state{result = RteResult} = State0) ->
   edts_rte_app:debug("rte server got exit~n"),
@@ -377,45 +371,6 @@ make_record_return_message(RecordName, Msg) ->
 -spec send_rte_result(term()) -> ok.
 send_rte_result(Result) ->
   gen_server:cast(?SERVER, {rte_result, Result}).
-
-%% @doc Calculate the MFA based on the line number in the module name. If the
-%%      depth is not changed, it is assumed that we remain in the same function
-%%      as before, therefore there is no need to re-calculate.
-%%      NOTE:
-%%      There seems to be a problem with int module. If a function call is
-%%      involved in the last expression of a function, when the debugger
-%%      process step into the function call, the depth is not changed.
-%%
-%%      One way to work around this is to cache all the sorted function
-%%      info for a particular module and do not use the change of the depth
-%%      as the indicator that a new mfa should be calculated. It is too
-%%      expensive if no such caching is performed,
--spec get_mfa(state(), module(), line()) ->
-                 {{module(), function(), arity()}, state()}.
-get_mfa(State, Module, Line) ->
-  case orddict:find(Module, State#rte_state.module_cache) of
-    error ->
-      ModFunInfo  = edts_rte_util:get_module_sorted_fun_info(Module),
-      NewModCache = orddict:store( Module, ModFunInfo
-                                 , State#rte_state.module_cache),
-      {Function, Arity}  = find_function(Line, ModFunInfo),
-      {{Module, Function, Arity}, State#rte_state{module_cache = NewModCache}};
-    {ok, ModFunInfo} ->
-      {Function, Arity}  = find_function(Line, ModFunInfo),
-      {{Module, Function, Arity}, State}
-  end.
-
-%% @doc Try to find the first function the line of which is smaller
-%%      than the given line.
--spec find_function(line(), [{line, function(), arity()}]) ->
-                       {function(), arity()} | not_found.
-find_function(_L, [])                      ->
-  not_found;
-find_function(L, [[L0, F, A] | T]) ->
-  case L >= L0 of
-    true  -> {F, A};
-    false -> find_function(L, T)
-  end.
 
 %% @doc Generate the replaced function based on the mfa_info
 replace_var_with_val(MFAInfo) ->
@@ -569,11 +524,11 @@ set_current_false([MFAInfo|T]) ->
 %% @doc Create a new mfa_info element
 -spec new_mfa_info(module(), function(), arity(), depth(), line(), bindings())
                   -> mfa_info().
-new_mfa_info(Module, Function, Arity, Depth, Line, Bindings) ->
-  {ok, FunAbsForm} = edts_code:get_function_abscode(Module, Function, Arity),
+new_mfa_info(Module, Func, Arity, Depth, Line, Bindings) ->
+  {ok, FunAbsForm} = edts_rte_util:get_function_abscode(Module, Func, Arity),
   AllClausesL0     = edts_rte_util:extract_fun_clauses_line_num(FunAbsForm),
   AllClausesL      = edts_rte_util:traverse_clause_struct(Line, AllClausesL0),
-  #mfa_info{ key            = {Module, Function, Arity, Depth}
+  #mfa_info{ key            = {Module, Func, Arity, Depth}
            , line           = Line
            , fun_form       = FunAbsForm
            , clause_structs = AllClausesL
