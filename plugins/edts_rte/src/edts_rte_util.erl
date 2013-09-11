@@ -27,6 +27,7 @@
 -export([ convert_list_to_term/2
         , expand_records/2
         , extract_fun_clauses_line_num/1
+        , get_function_abscode/3
         , get_module_sorted_fun_info/1
         , is_tail_call/3
         , read_and_add_records/2
@@ -67,6 +68,9 @@ expand_records(RT, E0) ->
   do_expand_records(UsedRecords, E0).
 
 %% @doc Extract all the line numbers of all the clauses from an abstract form
+%%      for both anonymous function and normal function
+extract_fun_clauses_line_num({'fun', _L, {clauses, Clauses}}) ->
+  extract_clauses_line_num(Clauses);
 extract_fun_clauses_line_num({function, _L, _Func, _Arity, Clauses}) ->
   extract_clauses_line_num(Clauses).
 
@@ -182,6 +186,65 @@ touch_clause(ClauseStruct, Line) ->
 
 read_and_add_records(Module, RT) ->
   read_and_add_records(Module, '_', [], [], RT).
+
+%% @doc get the abstract code of a function. support anonymous
+%%      function as well
+get_function_abscode(Module, Function, Arity) ->
+  case is_lambda(Function) of
+    false ->
+      edts_code:get_function_abscode(Module, Function, Arity);
+    {true, FatherFun, FatherArity, DefSeq}  ->
+      get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function)
+  end.
+
+%% @doc if an atom is the name of an anonymous function. the format is like
+%%      the following:
+%%      "-Funname/Arity-fun-N-"
+%%      where Funname is the name of the function, Arity is the number of
+%%      the arguments the function would take and N is the sequence of the
+%%      anonymous function defined in Funname.
+-spec is_lambda(Function :: atom()) ->
+                   {true, function(), arity(), integer()} | false.
+is_lambda(Function) ->
+  FuncStr = atom_to_list(Function),
+  case re:run(FuncStr, "-(.*)/(.*)-fun-(.*)-", [{capture, [1,2,3], list}]) of
+    {match, [FatherFunStr, FatherArityStr, DefinedSeq]} ->
+      {true, list_to_atom(FatherFunStr),
+             list_to_integer(FatherArityStr),
+             list_to_integer(DefinedSeq)};
+    nomatch ->
+      false
+  end.
+
+get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function) ->
+  {ok, FunAbsForm} = edts_code:get_function_abscode( Module
+                                                   , FatherFun, FatherArity),
+  {ok, normalize_fun( lists:nth( DefSeq+1
+                               , extract_lambda_abscode_from_fun(FunAbsForm))
+                    , Function)}.
+
+extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
+  lists:sort(fun( {'fun', L1, {clauses, _Clauses1}}
+                , {'fun', L2, {clauses, _Clauses2}}) ->
+                 L2 > L1
+             end, extract_lambda_abscode_from_clauses(Clauses)).
+
+extract_lambda_abscode_from_clauses(Clauses) ->
+  lists:foldl(fun(Clause, Acc) ->
+                extract_lambda_abscode_from_clause(Clause) ++ Acc
+              end, [], Clauses).
+
+extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
+  lists:foldl(fun(Expr, Acc) ->
+                extract_lambda_abscode_from_expr(Expr) ++ Acc
+              end, [], Exprs).
+
+extract_lambda_abscode_from_expr({match, _L, _LExpr0, RExpr0}) ->
+  extract_lambda_abscode_from_expr(RExpr0);
+extract_lambda_abscode_from_expr({'fun', _L, {clauses, Clauses}} = AbsCode) ->
+  [AbsCode|extract_lambda_abscode_from_clauses(Clauses)];
+extract_lambda_abscode_from_expr(_) ->
+  [].
 
 get_module_sorted_fun_info(M) ->
   FunAritys = int:functions(M),
@@ -505,6 +568,12 @@ var_to_val_in_fun(AbsForm, AllClausesLn, Bindings) ->
   lists:flatten(NewForm).
 
 %% @doc replace variable names with values for a function
+do_var_to_val_in_fun( {'fun', L, {clauses, Clauses0}}
+                    , AllClausesLn, Bindings) ->
+  Clauses = replace_var_with_val_in_clauses( Clauses0
+                                           , AllClausesLn
+                                           , Bindings),
+  {'fun', L, {clauses, Clauses}};
 do_var_to_val_in_fun( {function, L, FuncName, Arity, Clauses0}
                     , AllClausesLn, Bindings) ->
   Clauses = replace_var_with_val_in_clauses( Clauses0
@@ -592,10 +661,14 @@ replace_var_with_val_in_expr({op, L, Ops, LExpr0, RExpr0}, ECLn, Bs)      ->
   LExpr = replace_var_with_val_in_expr(LExpr0, ECLn, Bs),
   RExpr = replace_var_with_val_in_expr(RExpr0, ECLn, Bs),
   {op, L, Ops, LExpr, RExpr};
-replace_var_with_val_in_expr( {call, L, {atom, L, F0}, ArgList0}
+replace_var_with_val_in_expr( {call, L, {atom, L, F0}, ArgList}
                             , ECLn, Bs)                                   ->
   F = replace_var_with_val_in_expr(F0, ECLn, Bs),
-  {call, L, {atom, L, F}, replace_var_with_val_in_exprs(ArgList0, ECLn, Bs)};
+  {call, L, {atom, L, F}, replace_var_with_val_in_exprs(ArgList, ECLn, Bs)};
+replace_var_with_val_in_expr( {call, L, {var, L, _} = FunName, ArgList}
+                            , ECLn, Bs)                                   ->
+  FunVal = replace_var_with_val_in_expr(FunName, ECLn, Bs),
+  {call, L, FunVal, replace_var_with_val_in_exprs(ArgList, ECLn, Bs)};
 replace_var_with_val_in_expr( {call, L, {remote, L, M0, F0}, Args0}
                             , ECLn, Bs)                                   ->
   M = replace_var_with_val_in_expr(M0, ECLn, Bs),
@@ -654,10 +727,10 @@ replace_var_with_val({var, L, VariableName}, Bs) ->
 replace_var_with_val(Other, _Bs)                 ->
   Other.
 
-do_replace(VarName, Value, L) ->
-  ReplacedStr      = make_replaced_str(VarName, Value),
-  Tokens0          = get_tokens(ReplacedStr),
-  Tokens           = maybe_replace_pid(Tokens0, Value),
+do_replace(VarName, Value0, L) ->
+  Value       = maybe_convert_to_str(Value0),
+  ReplacedStr = make_replaced_str(VarName, Value),
+  Tokens      = get_tokens(ReplacedStr),
   {ok, [ValForm]}  = erl_parse:parse_exprs(Tokens),
   replace_line_num(ValForm, L).
 
@@ -669,24 +742,33 @@ get_tokens(ValStr) ->
   {ok, Tokens, _} = erl_scan:string(ValStr),
   Tokens.
 
-%% pid is displayed as atom instead. coz it is not a valid erlang term
-maybe_replace_pid(Tokens0, Value) ->
-  case is_pid_tokens(Tokens0) of
-    true  ->
-      ValStr0 = lists:flatten(io_lib:format("{__pid__, ~p}", [Value])),
-      edts_rte_app:debug("pid token:~p~n", [Tokens0]),
-      ValStr1 = re:replace(ValStr0, "\\.", ",", [{return, list}, global]),
-      ValStr2 = re:replace(ValStr1, "\\<", "{", [{return, list}, global]),
-      ValStr  = re:replace(ValStr2, "\\>", "}", [{return, list}, global]),
-      get_tokens(ValStr++".");
-    false ->
-      Tokens0
+%% @doc for values such as Pid and Func, which are not valid
+%%      erlang terms, convert them to atom and return back.
+maybe_convert_to_str(Value) ->
+  Str0   = lists:flatten(io_lib:format("~p", [Value])),
+  Str    = string:concat(Str0, "."),
+  Tokens = get_tokens(Str),
+  Spec   = [ {fun is_pid_tokens/1, "pid: "}
+           , {fun is_func_tokens/1, "fun: "}],
+  convert_with_spec(Spec, Value, Str0, Tokens).
+
+convert_with_spec([], Value, _Str, _Tokens)                            ->
+  Value;
+convert_with_spec([{Predicate, StrPrefix} | Rest], Value, Str, Tokens) ->
+  case Predicate(Tokens) of
+    true  -> string:concat(StrPrefix,Str);
+    false -> convert_with_spec(Rest, Value, Str, Tokens)
   end.
 
 is_pid_tokens(Tokens) ->
   [FirstElem | _] = Tokens,
   [{dot, _}, LastElem | _] = lists:reverse(Tokens),
   is_left_arrow(FirstElem) andalso is_right_arrow(LastElem).
+
+is_func_tokens([{'#', _}, {var, _, 'Fun'} | _Rest]) ->
+  true;
+is_func_tokens(_) ->
+  false.
 
 is_left_arrow({Char, _}) when Char =:= '<' ->
   true;
@@ -710,6 +792,10 @@ replace_line_num(Others,  L) when is_list(Others) ->
             end, Others);
 replace_line_num(Other,  _L)                      ->
   Other.
+
+normalize_fun({'fun', L, {clauses, Clauses}}, Function) ->
+  {clause,_L,ArgList,_WhenList,_Lines} = hd(Clauses),
+  {function, L, Function, length(ArgList), Clauses}.
 
 %%%_* Emacs ====================================================================
 %%% Local Variables:
