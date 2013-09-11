@@ -194,11 +194,7 @@ get_function_abscode(Module, Function, Arity) ->
     false ->
       edts_code:get_function_abscode(Module, Function, Arity);
     {true, FatherFun, FatherArity, DefSeq}  ->
-      io:format("fun:~p, arity:~p, defseq:~p~n"
-                , [FatherFun, FatherArity, DefSeq]),
-      Res = get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq),
-      io:format("lambda abscode:~p~n", [Res]),
-      Res
+      get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function)
   end.
 
 %% @doc if an atom is the name of an anonymous function. the format is like
@@ -220,9 +216,12 @@ is_lambda(Function) ->
       false
   end.
 
-get_lambda_abscode(Module, Function, Arity, DefSeq) ->
-  {ok, FunAbsForm} = edts_code:get_function_abscode(Module, Function, Arity),
-  {ok, lists:nth(DefSeq+1, extract_lambda_abscode_from_fun(FunAbsForm))}.
+get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function) ->
+  {ok, FunAbsForm} = edts_code:get_function_abscode( Module
+                                                   , FatherFun, FatherArity),
+  {ok, normalize_fun( lists:nth( DefSeq+1
+                               , extract_lambda_abscode_from_fun(FunAbsForm))
+                    , Function)}.
 
 extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
   lists:sort(fun( {'fun', L1, {clauses, _Clauses1}}
@@ -569,6 +568,12 @@ var_to_val_in_fun(AbsForm, AllClausesLn, Bindings) ->
   lists:flatten(NewForm).
 
 %% @doc replace variable names with values for a function
+do_var_to_val_in_fun( {'fun', L, {clauses, Clauses0}}
+                    , AllClausesLn, Bindings) ->
+  Clauses = replace_var_with_val_in_clauses( Clauses0
+                                           , AllClausesLn
+                                           , Bindings),
+  {'fun', L, {clauses, Clauses}};
 do_var_to_val_in_fun( {function, L, FuncName, Arity, Clauses0}
                     , AllClausesLn, Bindings) ->
   Clauses = replace_var_with_val_in_clauses( Clauses0
@@ -787,6 +792,10 @@ replace_line_num(Others,  L) when is_list(Others) ->
             end, Others);
 replace_line_num(Other,  _L)                      ->
   Other.
+
+normalize_fun({'fun', L, {clauses, Clauses}}, Function) ->
+  {clause,_L,ArgList,_WhenList,_Lines} = hd(Clauses),
+  {function, L, Function, length(ArgList), Clauses}.
 
 %%%_* Emacs ====================================================================
 %%% Local Variables:
