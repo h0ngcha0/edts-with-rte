@@ -582,6 +582,39 @@ do_var_to_val_in_fun( {function, L, FuncName, Arity, Clauses0}
   %% edts_rte_app:debug("Replaced Clauses are:~p~n", [Clauses0]),
   {function, L, FuncName, Arity, Clauses}.
 
+%% @doc replace variable names with values in each of the clauses for
+%%      anonymous functions.
+%%      there are two differences between this function and @see
+%%      replace_var_with_val_in_clauses.
+%%      1) We don't need to care about if the function clause is executed
+%%         or not. because this is just the definition of the anonymous
+%%         function and it is not being executed yet.
+%%      2) We need to consider the shadowing. e.g. if A is in the arglist
+%%         of a function clause in the anonymous function, we can't replace
+%%         the temporary variable A even if A is already defined from outside.
+replace_var_with_val_in_lambda_clauses(Clauses, AllClausesLn, Binding0) ->
+  lists:map(fun({clause,_L,ArgList,_WhenList0,_Lines0} = Clause) ->
+                Vars = extract_vars(ArgList),
+                Binding = lists:foldl(fun(Var, TmpBinding) ->
+                                        lists:keydelete(Var, 1, TmpBinding)
+                                      end, Binding0, Vars),
+                do_replace_var_with_val_in_clause( Clause
+                                                 , AllClausesLn
+                                                 , Binding)
+            end, Clauses).
+
+extract_vars(ArgList) ->
+  lists:foldl(fun(Arg, Acc) ->
+                extract_var(Arg) ++ Acc
+              end, [], ArgList).
+
+%% This needs to be extended to support more programming constructs
+extract_var({var, _, VarName}) ->
+  [VarName];
+extract_var(_) ->
+  [].
+
+
 %% @doc replace variable names with values in each of the clauses
 replace_var_with_val_in_clauses(Clauses, AllClausesLn, Binding) ->
   lists:map(fun({clause,L,_ArgList0,_WhenList0,_Lines0} = Clause) ->
@@ -710,11 +743,16 @@ replace_var_with_val_in_expr( {'receive', L, Clauses0, Int, Exprs0}
   {'receive', L, Clauses, Int, Expr};
 replace_var_with_val_in_expr( {'fun', L, {clauses, Clauses0}}
                             , ECLn, Bs)                    ->
-  Clauses  = replace_var_with_val_in_clauses(Clauses0, ECLn, Bs),
+  Clauses  = replace_var_with_val_in_lambda_clauses(Clauses0, ECLn, Bs),
   {'fun', L, {clauses, Clauses}};
 replace_var_with_val_in_expr( {record, _, _Name, _Fields} = Record
                             , _ECLn, _Bs)                                 ->
   expand_records(record_table_name(), Record);
+%% replace_var_with_val_in_expr( {record, _L, _Var, _Name, _Fields} = Record
+%%                          , _ECLn, _Bs)                                   ->
+%%   %% Var = replace_var_with_val_in_expr(Var0, ECLn, Bs),
+%%   %% RecordFields = replace_var_with_val_in_expr(RecordFields0, ECLn, Bs),
+%%   expand_records(record_table_name(), Record);
 replace_var_with_val_in_expr([Statement0|T], ECLn, Bs)                    ->
   Statement = replace_var_with_val_in_expr(Statement0, ECLn, Bs),
   [Statement | replace_var_with_val_in_expr(T, ECLn, Bs)];
@@ -722,8 +760,10 @@ replace_var_with_val_in_expr(Expr, _ECLn, _Bs)                            ->
   error({unexpected_expression, Expr}).
 
 replace_var_with_val({var, L, VariableName}, Bs) ->
-  Value = proplists:get_value(VariableName, Bs),
-  do_replace(VariableName, Value, L);
+  case lists:keyfind(VariableName, 1, Bs) of
+    {VariableName, Value} -> do_replace(VariableName, Value, L);
+    false                 -> {var, L, VariableName}
+  end;
 replace_var_with_val(Other, _Bs)                 ->
   Other.
 
