@@ -24,7 +24,7 @@
 -module(edts_rte_util).
 
 %%%_* Exports =================================================================
--export([ convert_list_to_term/2
+-export([ convert_list_to_term/1
         , expand_records/2
         , extract_fun_clauses_line_num/1
         , get_function_abscode/3
@@ -47,7 +47,7 @@
 -type clause_struct() :: #clause_struct{}.
 
 %%%_* API ======================================================================
-convert_list_to_term(Arguments, _RT) ->
+convert_list_to_term(Arguments) ->
   edts_rte_app:debug("args:~p~n", [Arguments]),
   %% N.B. this is very hackish. added a '.' because
   %%      erl_scan:string/1 requires full expression with dot

@@ -183,17 +183,16 @@ init([]) ->
   {ok, #rte_state{}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
-  RcdTbl   = edts_rte_util:record_table_name(),
+  {ok, _M} = update_record_definition(Module),
   Args     = binary_to_list(Args0),
-  ArgsTerm = edts_rte_util:convert_list_to_term(Args, RcdTbl),
+  ArgsTerm = edts_rte_util:convert_list_to_term(Args),
   Arity    = length(ArgsTerm),
 
   edts_rte_app:debug("arguments:~p~n", [ArgsTerm]),
 
   %% try to read the record from the current module.. right now this is the
   %% only record support
-  Res = exec([ fun() -> update_record_definition(Module) end
-             , fun() -> interpret_current_module(Module) end
+  Res = exec([ fun() -> interpret_current_module(Module) end
              , fun() -> set_breakpoint_beg(Module, Fun, Arity) end
              , fun() -> run_mfa(Module, Fun, ArgsTerm) end]),
 
@@ -229,7 +228,6 @@ handle_call({forget_record_defs, RecordName}, _From, State) ->
   Reply =
     case ets:lookup(edts_rte_util:record_table_name(), RecordName) of
       [] ->
-        io:format("recordname:~p~n", [RecordName]),
         {error, make_record_return_message(RecordName, " is not stored")};
       [_RecordDef] ->
         ets:delete(edts_rte_util:record_table_name(), RecordName),
