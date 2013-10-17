@@ -64,7 +64,8 @@
                   , line           :: line()
                   }).
 
--record(rte_state, { exit_p                = false      :: boolean()
+-record(rte_state, { prev_bindings         = []
+                   , exit_p                = false      :: boolean()
                    , mfa_info_tree         = []         :: list()  %% FIXME type
                    , proc                  = unattached :: unattached | pid()
                    , result                = undefined  :: term()
@@ -261,17 +262,24 @@ handle_cast({finished_attach, Pid}, State) ->
   edts_rte_int_listener:step(),
   edts_rte_app:debug("finish attach.....~n"),
   {noreply, State};
-handle_cast({break_at, {Bindings, MFA, Line, Depth}}, State) ->
-  edts_rte_app:debug("1) send_binding.. before step. depth:~p~n", [Depth]),
-  edts_rte_app:debug("2) send_binding.. Line:~p, Bindings:~p~n",
-                     [Line, Bindings]),
+handle_cast({break_at, {Bindings0, MFA, Line, Depth}}, State) ->
+  Bindings = remove_wildcard_binding(Bindings0),
+
+  edts_rte_app:debug("1) break_at.. before step. depth:~p~n", [Depth]),
+  edts_rte_app:debug("2) break_at.. Line:~p, Bindings:~p~n", [Line, Bindings]),
   edts_rte_app:debug("3) new mfa:~p~n", [MFA]),
 
-  NewMFAInfoTree = update_mfa_info_tree( MFA, Depth, Line, Bindings
-                                       , State#rte_state.mfa_info_tree),
+  NewMFAInfoTree =
+    case update_mfa_info_tree_p(Bindings, State#rte_state.prev_bindings) of
+      true  -> update_mfa_info_tree( MFA, Depth, Line, Bindings
+                                   , State#rte_state.mfa_info_tree);
+      false -> State#rte_state.mfa_info_tree
+    end,
+
   %% continue to step
   edts_rte_int_listener:step(),
-  {noreply, State#rte_state{mfa_info_tree = NewMFAInfoTree}};
+  {noreply, State#rte_state{ mfa_info_tree = NewMFAInfoTree
+                           , prev_bindings = Bindings}};
 handle_cast(exit, #rte_state{result = RteResult} = State0) ->
   edts_rte_app:debug("rte server got exit~n"),
   State = on_exit(RteResult, State0),
@@ -393,6 +401,36 @@ on_exit(Result, State) ->
   edts_rte_app:debug( "======= mfa_info_tree: ~p~n"
                     , [State#rte_state.mfa_info_tree]),
   State.
+
+%% @doc When referencing Erlang records in the program, e.g.
+%%      Foo = Bar#bar.foo
+%%      Erlang will step in the same line twice. Assuming the
+%%      value of Bar#bar.foo is "foo", 1st time the new binding will
+%%      be {recN, "foo"} where N is a number. 2nd time the new binding
+%%      will be {Foo, "foo"}.
+%%      The purpose of the update_mfa_info_tree_p/1 function is to
+%%      ignore the first case.
+update_mfa_info_tree_p(Bindings, PrevBindings) ->
+  edts_rte_app:debug("bindings:~p~n", [Bindings]),
+  edts_rte_app:debug("prev_bindings:~p~n", [PrevBindings]),
+  Set     = sets:from_list(Bindings),
+  PrevSet = sets:from_list(PrevBindings),
+  Diff    = sets:to_list(sets:subtract(Set, PrevSet)),
+  case Diff of
+    [{VarName, _Val}] ->
+      case re:run(atom_to_list(VarName), "rec[0-9]+") of
+        {match, _} ->
+          edts_rte_app:debug("not updating mfa_info_tree~n"),
+          false;
+        nomatch    ->
+          edts_rte_app:debug("updating mfa_info_tree~n"),
+          true
+      end;
+    _ -> true
+  end.
+
+remove_wildcard_binding(Bindings) ->
+  lists:filter(fun({'_', _Val}) -> false; ({_, _}) -> true end, Bindings).
 
 %% @doc Update the mfa_info_tree.
 %%      The current mfa_info element should only be along the

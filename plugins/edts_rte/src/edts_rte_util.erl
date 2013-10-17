@@ -763,11 +763,20 @@ replace_var_with_val_in_expr( {'fun', L, {clauses, Clauses0}}
                             , ECLn, Bs, Er)                               ->
   Clauses  = replace_var_with_val_in_lambda_clauses(Clauses0, ECLn, Bs, Er),
   {'fun', L, {clauses, Clauses}};
+replace_var_with_val_in_expr( {record_index, L, Name, Expr0}
+                            , ECLn, Bs, Er)                               ->
+  Expr = replace_var_with_val_in_expr(Expr0, ECLn, Bs, Er),
+  {record_index, L, Name, Expr};
 replace_var_with_val_in_expr( {record_field, L, LExpr0, RExpr0}
                             , ECLn, Bs, Er)                               ->
   LExpr = replace_var_with_val_in_expr(LExpr0, ECLn, Bs, Er),
   RExpr = replace_var_with_val_in_expr(RExpr0, ECLn, Bs, Er),
   {record_field, L, LExpr, RExpr};
+replace_var_with_val_in_expr( {record_field, L, LExpr0, Name, RExpr0}
+                            , ECLn, Bs, Er)                               ->
+  LExpr = replace_var_with_val_in_expr(LExpr0, ECLn, Bs, Er),
+  RExpr = replace_var_with_val_in_expr(RExpr0, ECLn, Bs, Er),
+  {record_field, L, LExpr, Name, RExpr};
 replace_var_with_val_in_expr( {record, L, Name, Fields0}, ECLn, Bs, Er)   ->
   Fields = replace_var_with_val_in_exprs(Fields0, ECLn, Bs, Er),
   case Er of
