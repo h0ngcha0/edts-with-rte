@@ -681,6 +681,10 @@ replace_var_with_val_in_expr({nil, L}, _ECLn, _Bs, _Er)                   ->
   {nil, L};
 replace_var_with_val_in_expr({atom, _L, _A} = VarExpr, _ECLn, _Bs, _Er)   ->
   VarExpr;
+replace_var_with_val_in_expr({bin, _L, _FS} = BinExpr, _ECLn, _Bs, _Er)     ->
+  %% TODO: this might need more investigation as to how to replace
+  %%       the values in the sub expressions
+  BinExpr;
 replace_var_with_val_in_expr({cons, L, Expr0, Rest0}, ECLn, Bs, Er)       ->
   Expr = replace_var_with_val_in_expr(Expr0, ECLn, Bs, Er),
   Rest = replace_var_with_val_in_expr(Rest0, ECLn, Bs, Er),
