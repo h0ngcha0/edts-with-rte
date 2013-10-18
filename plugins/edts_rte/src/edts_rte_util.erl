@@ -240,8 +240,17 @@ extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
                 extract_lambda_abscode_from_expr(Expr) ++ Acc
               end, [], Exprs).
 
+%% TODO: Need to extract the labmda abscode from more expressions.
+%%       Really want a simpler way way of handling this.
+extract_lambda_abscode_from_expr({'case', _L, CaseExpr, Clauses}) ->
+  extract_lambda_abscode_from_expr(CaseExpr) ++
+    extract_lambda_abscode_from_clauses(Clauses);
 extract_lambda_abscode_from_expr({match, _L, _LExpr0, RExpr0}) ->
   extract_lambda_abscode_from_expr(RExpr0);
+extract_lambda_abscode_from_expr({call, _L1, {remote, _L2, _M, _F}, Args}) ->
+  lists:foldl(fun(Arg, Acc) ->
+                extract_lambda_abscode_from_expr(Arg) ++ Acc
+              end, [], Args);
 extract_lambda_abscode_from_expr({'fun', _L, {clauses, Clauses}} = AbsCode) ->
   [AbsCode|extract_lambda_abscode_from_clauses(Clauses)];
 extract_lambda_abscode_from_expr(_) ->
@@ -287,7 +296,7 @@ is_tail_call(ClauseStructs, PreviousLine, NewLine) ->
             , [[ClauseStructs, PreviousLine, NewLine]]),
   {LineSmallerClauses, _LineBiggerClauses} =
     lists:splitwith(fun(#clause_struct{line = L}) ->
-                      L < NewLine
+                      L =< NewLine
                     end, ClauseStructs),
   edts_rte_app:debug("9) LineSmaller:~p~nLineBigger:~p~n"
             , [LineSmallerClauses, _LineBiggerClauses]),
@@ -297,8 +306,8 @@ is_tail_call(ClauseStructs, PreviousLine, NewLine) ->
     false -> true;
     true  ->
       %% assert
-      true = PreviousLine > L,
-      %% if previous line is bigger or equal than new line, then it
+      true = PreviousLine >= L,
+      %% if previous line is bigger or equal than the new line, then it
       %% should be a tail recursion
       PreviousLine >= NewLine
   end.

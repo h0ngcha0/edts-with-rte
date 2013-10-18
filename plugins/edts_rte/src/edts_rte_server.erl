@@ -410,6 +410,7 @@ on_exit(Result, State) ->
 %%      will be {Foo, "foo"}.
 %%      The purpose of the update_mfa_info_tree_p/1 function is to
 %%      ignore the first case.
+%%      this will need to be smarter, should consider in the same function
 update_mfa_info_tree_p(Bindings, PrevBindings) ->
   edts_rte_app:debug("bindings:~p~n", [Bindings]),
   edts_rte_app:debug("prev_bindings:~p~n", [PrevBindings]),
@@ -426,7 +427,9 @@ update_mfa_info_tree_p(Bindings, PrevBindings) ->
           edts_rte_app:debug("updating mfa_info_tree~n"),
           true
       end;
-    _ -> true
+    _ ->
+      edts_rte_app:debug("updating mfa_info_tree~n"),
+      true
   end.
 
 remove_wildcard_binding(Bindings) ->
