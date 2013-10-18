@@ -124,8 +124,9 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
 (replace-regexp-in-string "\\`[ \t\n]*" "" (replace-regexp-in-string "[ \t\n]*\\'" "" string)))
 
 (defun get-rte-run-body(module function args)
-  "Get the json body for rte-run rest request"
-  (format "{\"cmd\": \"rte_run\",\"args\": [\"%s\",\"%s\", \"%s\"]}" module function args))
+  "Get the json body for rte-run rest request. String needs to be escaped properly."
+  (format "{\"cmd\": \"rte_run\",\"args\": [\"%s\",\"%s\", \"%s\"]}"
+          module function (replace-regexp-in-string "\\\"" "\\\\\"" args)))
 
 (defun get-interpret-module-body (module)
   "Get the json body for the interpret-module rest request"

@@ -39,7 +39,6 @@
         , finished_attach/1
         , forget_record_defs/1
         , list_record_names/0
-        , read_and_add_records/1
         , rte_run/3
         , send_exit/0
         , update_record_defs/1
@@ -64,7 +63,8 @@
                   , line           :: line()
                   }).
 
--record(rte_state, { exit_p                = false      :: boolean()
+-record(rte_state, { prev_bindings         = []
+                   , exit_p                = false      :: boolean()
                    , mfa_info_tree         = []         :: list()  %% FIXME type
                    , proc                  = unattached :: unattached | pid()
                    , result                = undefined  :: term()
@@ -154,11 +154,6 @@ break_at(Msg) ->
 send_exit() ->
   gen_server:cast(?SERVER, exit).
 
-%% FIXME: need to come up with a way to add all existing records from
-%%        a project and remove records when recompile a particular module
-read_and_add_records(Module) ->
-  edts_rte_util:read_and_add_records(Module, edts_rte_util:record_table_name()).
-
 %%%_* gen_server callbacks  ====================================================
 %%------------------------------------------------------------------------------
 %% @private
@@ -178,22 +173,20 @@ init([]) ->
   %% records in erlang are purely syntactic sugar. create a table to store the
   %% mapping between records and their definitions.
   %% set the table to public to make debugging easier
-  RcdTbl = edts_rte_util:record_table_name(),
-  RcdTbl = ets:new(RcdTbl, [public, named_table]),
+  edts_rte_records:init(),
   {ok, #rte_state{}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
-  RcdTbl   = edts_rte_util:record_table_name(),
+  {ok, _M} = update_record_definition(Module),
   Args     = binary_to_list(Args0),
-  ArgsTerm = edts_rte_util:convert_list_to_term(Args, RcdTbl),
+  ArgsTerm = edts_rte_util:convert_list_to_term(Args),
   Arity    = length(ArgsTerm),
 
   edts_rte_app:debug("arguments:~p~n", [ArgsTerm]),
 
   %% try to read the record from the current module.. right now this is the
   %% only record support
-  Res = exec([ fun() -> update_record_definition(Module) end
-             , fun() -> interpret_current_module(Module) end
+  Res = exec([ fun() -> interpret_current_module(Module) end
              , fun() -> set_breakpoint_beg(Module, Fun, Arity) end
              , fun() -> run_mfa(Module, Fun, ArgsTerm) end]),
 
@@ -222,19 +215,16 @@ handle_call(list_record_names, _From, State) ->
 handle_call({forget_record_defs, ''}, _From, State) ->
   %% if user didn't specify a record name, delete all the entries from
   %% the record definition table.
-  true = ets:delete_all_objects(edts_rte_util:record_table_name()),
+  edts_rte_records:delete_stored_records(),
   Msg  = make_record_return_message('all records', " are forgotten"),
   {reply, {ok, Msg}, State};
 handle_call({forget_record_defs, RecordName}, _From, State) ->
-  Reply =
-    case ets:lookup(edts_rte_util:record_table_name(), RecordName) of
-      [] ->
-        io:format("recordname:~p~n", [RecordName]),
-        {error, make_record_return_message(RecordName, " is not stored")};
-      [_RecordDef] ->
-        ets:delete(edts_rte_util:record_table_name(), RecordName),
-        {ok, make_record_return_message(RecordName, " is forgotten")}
-    end,
+  Reply = case edts_rte_records:delete_stored_record(RecordName) of
+            not_found ->
+              {error, make_record_return_message(RecordName, " is not stored")};
+            ok ->
+              {ok, make_record_return_message(RecordName, " is forgotten")}
+          end,
   {reply, Reply, State}.
 
 %%------------------------------------------------------------------------------
@@ -263,17 +253,24 @@ handle_cast({finished_attach, Pid}, State) ->
   edts_rte_int_listener:step(),
   edts_rte_app:debug("finish attach.....~n"),
   {noreply, State};
-handle_cast({break_at, {Bindings, MFA, Line, Depth}}, State) ->
-  edts_rte_app:debug("1) send_binding.. before step. depth:~p~n", [Depth]),
-  edts_rte_app:debug("2) send_binding.. Line:~p, Bindings:~p~n",
-                     [Line, Bindings]),
+handle_cast({break_at, {Bindings0, MFA, Line, Depth}}, State) ->
+  Bindings = remove_wildcard_binding(Bindings0),
+
+  edts_rte_app:debug("1) break_at.. before step. depth:~p~n", [Depth]),
+  edts_rte_app:debug("2) break_at.. Line:~p, Bindings:~p~n", [Line, Bindings]),
   edts_rte_app:debug("3) new mfa:~p~n", [MFA]),
 
-  NewMFAInfoTree = update_mfa_info_tree( MFA, Depth, Line, Bindings
-                                       , State#rte_state.mfa_info_tree),
+  NewMFAInfoTree =
+    case update_mfa_info_tree_p(Bindings, State#rte_state.prev_bindings) of
+      true  -> update_mfa_info_tree( MFA, Depth, Line, Bindings
+                                   , State#rte_state.mfa_info_tree);
+      false -> State#rte_state.mfa_info_tree
+    end,
+
   %% continue to step
   edts_rte_int_listener:step(),
-  {noreply, State#rte_state{mfa_info_tree = NewMFAInfoTree}};
+  {noreply, State#rte_state{ mfa_info_tree = NewMFAInfoTree
+                           , prev_bindings = Bindings}};
 handle_cast(exit, #rte_state{result = RteResult} = State0) ->
   edts_rte_app:debug("rte server got exit~n"),
   State = on_exit(RteResult, State0),
@@ -311,8 +308,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%_* Internal =================================================================
 %% @doc Read and store the record definitions from the specified module.
 update_record_definition(Module) ->
-  RcdTbl    = edts_rte_util:record_table_name(),
-  AddedRds  = edts_rte_util:read_and_add_records(Module, RcdTbl),
+  AddedRds  = edts_rte_records:read_and_add_records(Module),
   Msg       = lists:flatten(
                 io_lib:format("Added record definitions:~p", [AddedRds])),
   edts_rte_app:debug(Msg),
@@ -320,8 +316,7 @@ update_record_definition(Module) ->
 
 %% @doc Read the names of all the record stored in RTE
 list_stored_record_names() ->
-  Records = lists:map( fun(Record) -> element(1, Record) end
-                     , ets:tab2list(edts_rte_util:record_table_name())),
+  Records = edts_rte_records:get_stored_records(),
   Reply   = lists:flatten(io_lib:format("All saved records:~p", [Records])),
   {ok, Reply}.
 
@@ -395,6 +390,39 @@ on_exit(Result, State) ->
   edts_rte_app:debug( "======= mfa_info_tree: ~p~n"
                     , [State#rte_state.mfa_info_tree]),
   State.
+
+%% @doc When referencing Erlang records in the program, e.g.
+%%      Foo = Bar#bar.foo
+%%      Erlang will step in the same line twice. Assuming the
+%%      value of Bar#bar.foo is "foo", 1st time the new binding will
+%%      be {recN, "foo"} where N is a number. 2nd time the new binding
+%%      will be {Foo, "foo"}.
+%%      The purpose of the update_mfa_info_tree_p/1 function is to
+%%      ignore the first case.
+%%      this will need to be smarter, should consider in the same function
+update_mfa_info_tree_p(Bindings, PrevBindings) ->
+  edts_rte_app:debug("bindings:~p~n", [Bindings]),
+  edts_rte_app:debug("prev_bindings:~p~n", [PrevBindings]),
+  Set     = sets:from_list(Bindings),
+  PrevSet = sets:from_list(PrevBindings),
+  Diff    = sets:to_list(sets:subtract(Set, PrevSet)),
+  case Diff of
+    [{VarName, _Val}] ->
+      case re:run(atom_to_list(VarName), "rec[0-9]+") of
+        {match, _} ->
+          edts_rte_app:debug("not updating mfa_info_tree~n"),
+          false;
+        nomatch    ->
+          edts_rte_app:debug("updating mfa_info_tree~n"),
+          true
+      end;
+    _ ->
+      edts_rte_app:debug("updating mfa_info_tree~n"),
+      true
+  end.
+
+remove_wildcard_binding(Bindings) ->
+  lists:filter(fun({'_', _Val}) -> false; ({_, _}) -> true end, Bindings).
 
 %% @doc Update the mfa_info_tree.
 %%      The current mfa_info element should only be along the
