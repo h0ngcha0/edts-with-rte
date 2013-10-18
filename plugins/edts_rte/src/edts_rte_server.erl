@@ -39,7 +39,6 @@
         , finished_attach/1
         , forget_record_defs/1
         , list_record_names/0
-        , read_and_add_records/1
         , rte_run/3
         , send_exit/0
         , update_record_defs/1
@@ -155,11 +154,6 @@ break_at(Msg) ->
 send_exit() ->
   gen_server:cast(?SERVER, exit).
 
-%% FIXME: need to come up with a way to add all existing records from
-%%        a project and remove records when recompile a particular module
-read_and_add_records(Module) ->
-  edts_rte_util:read_and_add_records(Module, edts_rte_util:record_table_name()).
-
 %%%_* gen_server callbacks  ====================================================
 %%------------------------------------------------------------------------------
 %% @private
@@ -179,8 +173,7 @@ init([]) ->
   %% records in erlang are purely syntactic sugar. create a table to store the
   %% mapping between records and their definitions.
   %% set the table to public to make debugging easier
-  RcdTbl = edts_rte_util:record_table_name(),
-  RcdTbl = ets:new(RcdTbl, [public, named_table]),
+  edts_rte_records:init(),
   {ok, #rte_state{}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
@@ -222,18 +215,16 @@ handle_call(list_record_names, _From, State) ->
 handle_call({forget_record_defs, ''}, _From, State) ->
   %% if user didn't specify a record name, delete all the entries from
   %% the record definition table.
-  true = ets:delete_all_objects(edts_rte_util:record_table_name()),
+  edts_rte_records:delete_stored_records(),
   Msg  = make_record_return_message('all records', " are forgotten"),
   {reply, {ok, Msg}, State};
 handle_call({forget_record_defs, RecordName}, _From, State) ->
-  Reply =
-    case ets:lookup(edts_rte_util:record_table_name(), RecordName) of
-      [] ->
-        {error, make_record_return_message(RecordName, " is not stored")};
-      [_RecordDef] ->
-        ets:delete(edts_rte_util:record_table_name(), RecordName),
-        {ok, make_record_return_message(RecordName, " is forgotten")}
-    end,
+  Reply = case edts_rte_records:delete_stored_record(RecordName) of
+            not_found ->
+              {error, make_record_return_message(RecordName, " is not stored")};
+            ok ->
+              {ok, make_record_return_message(RecordName, " is forgotten")}
+          end,
   {reply, Reply, State}.
 
 %%------------------------------------------------------------------------------
@@ -317,8 +308,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%_* Internal =================================================================
 %% @doc Read and store the record definitions from the specified module.
 update_record_definition(Module) ->
-  RcdTbl    = edts_rte_util:record_table_name(),
-  AddedRds  = edts_rte_util:read_and_add_records(Module, RcdTbl),
+  AddedRds  = edts_rte_records:read_and_add_records(Module),
   Msg       = lists:flatten(
                 io_lib:format("Added record definitions:~p", [AddedRds])),
   edts_rte_app:debug(Msg),
@@ -326,8 +316,7 @@ update_record_definition(Module) ->
 
 %% @doc Read the names of all the record stored in RTE
 list_stored_record_names() ->
-  Records = lists:map( fun(Record) -> element(1, Record) end
-                     , ets:tab2list(edts_rte_util:record_table_name())),
+  Records = edts_rte_records:get_stored_records(),
   Reply   = lists:flatten(io_lib:format("All saved records:~p", [Records])),
   {ok, Reply}.
 

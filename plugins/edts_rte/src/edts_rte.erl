@@ -65,6 +65,7 @@ project_node_modules()  ->
   [ edts_rte_app
   , edts_rte_util
   , edts_rte_int_listener
+  , edts_rte_records
   , edts_rte_server
   , edts_rte_sup
   ].
