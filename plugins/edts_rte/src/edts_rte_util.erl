@@ -654,8 +654,6 @@ is_clause_touched(L, [H|T])                                ->
 do_replace_var_with_val_in_clause( {clause,L,ArgList0,WhenList0,Lines0}
                                  , AllClausesLn, Binding, ExpandRecord) ->
   %% replace all the variables with values for all the exprs in argument list
-  io:format("ArgLists0:~p~n",[ArgList0]),
-  io:format("Binding:~p~n",[Binding]),
   ArgList  = replace_var_with_val_in_expr( ArgList0, AllClausesLn
                                          , Binding, ExpandRecord),
   %% replace variables' name with values in "when" list
@@ -699,8 +697,6 @@ replace_var_with_val_in_expr({cons, L, Expr0, Rest0}, ECLn, Bs, Er)       ->
   Rest = replace_var_with_val_in_expr(Rest0, ECLn, Bs, Er),
   {cons, L, Expr, Rest};
 replace_var_with_val_in_expr({tuple, L, Exprs0}, ECLn, Bs, Er)            ->
-  io:format("tuple exprs:~p~n", [Exprs0]),
-  io:format("tuple bs:~p~n", [bs]),
   Exprs = replace_var_with_val_in_exprs(Exprs0, ECLn, Bs, Er),
   {tuple, L, Exprs};
 replace_var_with_val_in_expr({float, _, _} = VarExpr, _ECLn, _Bs, _Er)    ->
