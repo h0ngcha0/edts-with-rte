@@ -374,7 +374,8 @@ replace_var_with_val(MFAInfo) ->
            , fun_form       = FunAbsForm
            , clause_structs = AllClausesLn} = MFAInfo,
   {_Mod, _Fun, _Arity, Depth} = Key,
-  FunStr0 = edts_rte_util:var_to_val_in_fun(FunAbsForm, AllClausesLn, Bindings),
+  FunStr0 = edts_rte_util:replace_value_in_fun( FunAbsForm, AllClausesLn
+                                              , Bindings),
   FunStr  = re:replace( FunStr0, "\n", "\n"++indent_str(Depth)
                       , [{return, list}, global]),
   indent_str(Depth) ++ FunStr.
