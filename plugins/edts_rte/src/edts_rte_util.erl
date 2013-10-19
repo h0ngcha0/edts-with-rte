@@ -434,7 +434,8 @@ replace_value_in_expr({cons, L, Expr0, Rest0}, ECLn, Bs, Er)                 ->
   {cons, L, Expr, Rest};
 replace_value_in_expr({tuple, L, Exprs0}, ECLn, Bs, Er)                      ->
   Exprs = replace_value_in_exprs(Exprs0, ECLn, Bs, Er),
-  {tuple, L, Exprs};
+  %% try to convert it back to record if possible
+  edts_rte_records:tuple_to_record({tuple, L, Exprs});
 replace_value_in_expr({float, _, _} = VarExpr, _ECLn, _Bs, _Er)              ->
   VarExpr;
 replace_value_in_expr({integer, _, _} = VarExpr, _ECLn, _Bs, _Er)            ->
@@ -510,7 +511,7 @@ replace_value_in_expr({record, L, Name, Fields0}, ECLn, Bs, Er)              ->
   Fields = replace_value_in_exprs(Fields0, ECLn, Bs, Er),
   case Er of
     true  ->
-      edts_rte_records:expand_record_definition({record, L, Name, Fields});
+      edts_rte_records:record_to_tuple({record, L, Name, Fields});
     false ->
       {record, L, Name, Fields}
   end;
@@ -518,7 +519,7 @@ replace_value_in_expr({record, L, Var, Name, Fields0}, ECLn, Bs, Er)         ->
   Fields = replace_value_in_exprs(Fields0, ECLn, Bs, Er),
   case Er of
     true  ->
-      edts_rte_records:expand_record_definition({record, L, Var, Name, Fields});
+      edts_rte_records:record_to_tuple({record, L, Var, Name, Fields});
     false ->
       {record, L, Var, Name, Fields}
   end;
@@ -537,15 +538,20 @@ replace_value(Other, _Bs)                 ->
   Other.
 
 do_replace(VarName, Value0, L) ->
-  Value       = maybe_convert_to_str(Value0),
-  ReplacedStr = make_replaced_str(VarName, Value),
-  Tokens      = get_tokens(ReplacedStr),
-  {ok, [ValForm]}  = erl_parse:parse_exprs(Tokens),
-  replace_line_num(ValForm, L).
+  Value  = maybe_convert(Value0),
+  Form   = make_replaced_form(VarName, Value),
+  replace_line_num(Form, L).
 
-make_replaced_str(VarName, Value) ->
-  lists:flatten(io_lib:format( "{b,~p,s,~p,e}."
-                             , [VarName, Value])).
+%% make replaced string so that emacs can do the highlighting
+%% note that we can't do this for records because otherwise
+%% it will not be render properly as records but tuples.
+make_replaced_form(_VarName, {record, _, _, _} = Record) ->
+  Record;
+make_replaced_form(VarName, Value) ->
+  Str    = lists:flatten(io_lib:format( "{b,~p,s,~p,e}.", [VarName, Value])),
+  Tokens = get_tokens(Str),
+  {ok, [ValForm]}  = erl_parse:parse_exprs(Tokens),
+  ValForm.
 
 get_tokens(ValStr) ->
   {ok, Tokens, _} = erl_scan:string(ValStr),
@@ -553,20 +559,34 @@ get_tokens(ValStr) ->
 
 %% @doc for values such as Pid and Func, which are not valid
 %%      erlang terms, convert them to atom and return back.
-maybe_convert_to_str(Value) ->
+%%      For tuples, we try to convert them to records if possible
+maybe_convert(Value) ->
   Str0   = lists:flatten(io_lib:format("~p", [Value])),
   Str    = string:concat(Str0, "."),
   Tokens = get_tokens(Str),
-  Spec   = [ {fun is_pid_tokens/1, "pid: "}
-           , {fun is_func_tokens/1, "fun: "}],
-  convert_with_spec(Spec, Value, Str0, Tokens).
+  Spec   = [ { fun() -> is_pid_tokens(Tokens) end
+             , fun() -> string:concat("pid: ",Str) end}
+           , { fun() -> is_func_tokens(Tokens) end
+             , fun() -> string:concat("fun: ",Str) end}
+           , { fun() -> is_tuple(Value) end
+             , fun() ->
+                   {ok, [ValForm]} = erl_parse:parse_exprs(Tokens),
+                   maybe_convert_to_record(ValForm)
+               end}
+           ],
+  convert_with_spec(Spec, Value, Str0).
 
-convert_with_spec([], Value, _Str, _Tokens)                            ->
+maybe_convert_to_record({tuple, _L, _Fields} = Tuple) ->
+  edts_rte_records:tuple_to_record(Tuple);
+maybe_convert_to_record(Other) ->
+  Other.
+
+convert_with_spec([], Value, _Str)                              ->
   Value;
-convert_with_spec([{Predicate, StrPrefix} | Rest], Value, Str, Tokens) ->
-  case Predicate(Tokens) of
-    true  -> string:concat(StrPrefix,Str);
-    false -> convert_with_spec(Rest, Value, Str, Tokens)
+convert_with_spec([{Predicate, ConvertFun} | Rest], Value, Str) ->
+  case Predicate() of
+    true  -> ConvertFun();
+    false -> convert_with_spec(Rest, Value, Str)
   end.
 
 is_pid_tokens(Tokens) ->

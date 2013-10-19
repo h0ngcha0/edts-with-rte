@@ -24,12 +24,13 @@
 -module(edts_rte_records).
 
 %%%_* Exports =================================================================
--export([ expand_record_definition/1
-        , read_and_add_records/1
-        , get_stored_records/0
+-export([ delete_stored_record/1
         , delete_stored_records/0
-        , delete_stored_record/1
+        , get_stored_records/0
         , init/0
+        , read_and_add_records/1
+        , record_to_tuple/1
+        , tuple_to_record/1
         ]).
 
 %%%_* API ======================================================================
@@ -39,9 +40,24 @@ init() ->
 read_and_add_records(Module) ->
   read_and_add_records(Module, '_', [], [], record_table_name()).
 
-expand_record_definition(Expr) ->
+record_to_tuple(Expr) ->
   UsedRecords = used_record_defs(Expr, record_table_name()),
   do_expand_records(UsedRecords, Expr).
+
+tuple_to_record({tuple, L, []}) ->
+  {tuple, L, []};
+tuple_to_record({tuple, L, [{atom, _L2, Name}|T]} = Tuple) ->
+  NumFields = length(T),
+  case ets:lookup(record_table_name(), Name) of
+    [{_,{attribute,_,record,{Name,Fields}}}]
+      when length(Fields) =:= NumFields ->
+      RecordFields = [ {record_field, L3, Fn, Val} ||
+                       {Fn, {record_field, L3, Val}} <- lists:zip(T, Fields)],
+      {record, L, Name, RecordFields};
+    _ -> Tuple
+  end;
+tuple_to_record({tuple, _L, _Exprs} = Tuple) ->
+  Tuple.
 
 get_stored_records() ->
   lists:map( fun(Record) -> element(1, Record) end
