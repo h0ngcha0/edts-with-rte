@@ -26,8 +26,7 @@
 -export([ convert_list_to_term/1
         , extract_fun_clauses_line_num/1
         , get_function_abscode/3
-        , get_module_sorted_fun_info/1
-        , is_tail_call/3
+        , is_tail_recursion/3
         , traverse_clause_struct/2
         , replace_value_in_fun/3
         ]).
@@ -75,20 +74,57 @@ extract_fun_clauses_line_num({'fun', _L, {clauses, Clauses}}) ->
 extract_fun_clauses_line_num({function, _L, _Func, _Arity, Clauses}) ->
   extract_clauses_line_num(Clauses).
 
-%% @doc replace the temporary variables with the actual value in a function
--spec replace_value_in_fun( FunBody       :: string()
-                          , AllClausesLn  :: #clause_struct{}
-                          , Bindings      :: edts_rte_server:bindings())
-                          -> string().
-replace_value_in_fun(AbsForm, AllClausesLn, Bindings) ->
-  %% Replace variable names with variables' value and
-  %% combine the Token to function string again
-  NewFunBody            = do_var_to_val_in_fun( AbsForm
-                                              , AllClausesLn
-                                              , Bindings),
-  %% edts_rte_app:debug("New Body before flatten: ~p~n", [NewFunBody]),
-  NewForm               = erl_pp:form(NewFunBody),
-  lists:flatten(NewForm).
+%% @doc get the abstract code of a function. support anonymous
+%%      function as well
+-spec get_function_abscode(module(), function(), arity()) ->
+                              {ok, func_form()} | {error, any()}.
+get_function_abscode(Module, Function, Arity) ->
+  case is_lambda(Function) of
+    false ->
+      edts_code:get_function_abscode(Module, Function, Arity);
+    {true, FatherFun, FatherArity, DefSeq}  ->
+      get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function)
+  end.
+
+%% @doc When MFA and depth are the same, check if it is still a
+%%      differnet function call.
+%%      This could happen when:
+%%      1) Tail recursion
+%%      2) When function with the same name are called within the
+%%         same expression.
+%%         e.g.
+%%         fib(N) ->
+%%           fib(N-1) + fib(N-2)
+%%
+%%         In the example above, fib(N-2) will be called immediately
+%%         after fib(N-1) is returned, making them have the same MFA
+%%         and Depth.
+%%
+%%      To check this, we need to see if the the new line is either in
+%%      the other clause of the same function or it is in the same clause
+%%      but the new line is equal or smaller than the previous line.
+-spec is_tail_recursion([clause_struct()], non_neg_integer(), non_neg_integer())
+                       -> boolean().
+is_tail_recursion(ClauseStructs, PreviousLine, NewLine) ->
+  edts_rte_app:debug("8) is_tail_call:~p~n"
+            , [[ClauseStructs, PreviousLine, NewLine]]),
+  {LineSmallerClauses, _LineBiggerClauses} =
+    lists:splitwith(fun(#clause_struct{line = L}) ->
+                      L =< NewLine
+                    end, ClauseStructs),
+  edts_rte_app:debug("9) LineSmaller:~p~nLineBigger:~p~n"
+            , [LineSmallerClauses, _LineBiggerClauses]),
+  #clause_struct{touched = Touched, line = L} =
+    hd(lists:reverse(LineSmallerClauses)),
+  case Touched of
+    false -> true;
+    true  ->
+      %% assert
+      true = PreviousLine >= L,
+      %% if previous line is bigger or equal than the new line, then it
+      %% should be a tail recursion
+      PreviousLine >= NewLine
+  end.
 
 %% @doc traverse all the clauses and mark all the touched node
 %%      if one of the clause in a group of clauses are touched,
@@ -117,148 +153,20 @@ traverse_clause_struct(Line, ClauseStructs) ->
   do_traverse_clause_struct(SmallerLnClauses, Line, Touched) ++
     BiggerOrEqualLnClauses.
 
-do_traverse_clause_group([], _Line) ->
-  [];
-do_traverse_clause_group(SmallerClassesGroup, Line) ->
-  Reversed = lists:reverse(SmallerClassesGroup),
-  lists:reverse([traverse_clause_struct(Line, hd(Reversed))|tl(Reversed)]).
-
-do_traverse_clause_struct([], _line, _Touched) ->
-  [];
-do_traverse_clause_struct(SmallerLnClauses, Line, Touched) ->
-  [ClauseStruct|T] = lists:reverse(SmallerLnClauses),
-  %% check if other clauses in the same group has been touched.
-  case Touched of
-    true  -> case ClauseStruct#clause_struct.touched of
-               true  -> lists:reverse([touch_clause(ClauseStruct, Line)|T]);
-               false -> SmallerLnClauses
-             end;
-    false -> lists:reverse([touch_clause(ClauseStruct, Line)|T])
-  end.
-
-touch_clause(ClauseStruct, Line) ->
-  SubClauseStruct0 = ClauseStruct#clause_struct.sub_clause,
-  SubClauseStruct  = traverse_clause_struct(Line, SubClauseStruct0),
-  ClauseStruct#clause_struct{ touched = true
-                            , sub_clause = SubClauseStruct}.
-
-%% @doc get the abstract code of a function. support anonymous
-%%      function as well
-get_function_abscode(Module, Function, Arity) ->
-  case is_lambda(Function) of
-    false ->
-      edts_code:get_function_abscode(Module, Function, Arity);
-    {true, FatherFun, FatherArity, DefSeq}  ->
-      get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function)
-  end.
-
-%% @doc if an atom is the name of an anonymous function. the format is like
-%%      the following:
-%%      "-Funname/Arity-fun-N-"
-%%      where Funname is the name of the function, Arity is the number of
-%%      the arguments the function would take and N is the sequence of the
-%%      anonymous function defined in Funname.
--spec is_lambda(Function :: atom()) ->
-                   {true, function(), arity(), integer()} | false.
-is_lambda(Function) ->
-  FuncStr = atom_to_list(Function),
-  case re:run(FuncStr, "-(.*)/(.*)-fun-(.*)-", [{capture, [1,2,3], list}]) of
-    {match, [FatherFunStr, FatherArityStr, DefinedSeq]} ->
-      {true, list_to_atom(FatherFunStr),
-             list_to_integer(FatherArityStr),
-             list_to_integer(DefinedSeq)};
-    nomatch ->
-      false
-  end.
-
-get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function) ->
-  {ok, FunAbsForm} = edts_code:get_function_abscode( Module
-                                                   , FatherFun, FatherArity),
-  {ok, normalize_fun( lists:nth( DefSeq+1
-                               , extract_lambda_abscode_from_fun(FunAbsForm))
-                    , Function)}.
-
-extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
-  lists:sort(fun( {'fun', L1, {clauses, _Clauses1}}
-                , {'fun', L2, {clauses, _Clauses2}}) ->
-                 L2 > L1
-             end, extract_lambda_abscode_from_clauses(Clauses)).
-
-extract_lambda_abscode_from_clauses(Clauses) ->
-  lists:foldl(fun(Clause, Acc) ->
-                extract_lambda_abscode_from_clause(Clause) ++ Acc
-              end, [], Clauses).
-
-extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
-  lists:foldl(fun(Expr, Acc) ->
-                extract_lambda_abscode_from_expr(Expr) ++ Acc
-              end, [], Exprs).
-
-%% TODO: Need to extract the labmda abscode from more expressions.
-%%       Really want a simpler way way of handling this.
-extract_lambda_abscode_from_expr({'case', _L, CaseExpr, Clauses}) ->
-  extract_lambda_abscode_from_expr(CaseExpr) ++
-    extract_lambda_abscode_from_clauses(Clauses);
-extract_lambda_abscode_from_expr({match, _L, _LExpr0, RExpr0}) ->
-  extract_lambda_abscode_from_expr(RExpr0);
-extract_lambda_abscode_from_expr({call, _L1, {remote, _L2, _M, _F}, Args}) ->
-  lists:foldl(fun(Arg, Acc) ->
-                extract_lambda_abscode_from_expr(Arg) ++ Acc
-              end, [], Args);
-extract_lambda_abscode_from_expr({'fun', _L, {clauses, Clauses}} = AbsCode) ->
-  [AbsCode|extract_lambda_abscode_from_clauses(Clauses)];
-extract_lambda_abscode_from_expr(_) ->
-  [].
-
-get_module_sorted_fun_info(M) ->
-  FunAritys = int:functions(M),
-  AllLineFunAritys = lists:foldl(
-    fun([Fun, Arity], LineFunAritys) ->
-        FunInfo = edts_code:get_function_info(M, Fun, Arity),
-        {line, Line} = lists:keyfind(line, 1, FunInfo),
-        [[Line, Fun, Arity] | LineFunAritys]
-    end, [], FunAritys),
-  lists:reverse(lists:sort(AllLineFunAritys)).
-
-%% @doc When MFA and depth are the same, check if it is still a
-%%      differnet function call.
-%%      This could happen when:
-%%      1) Tail recursion
-%%      2) When function with the same name are called within the
-%%         same expression.
-%%         e.g.
-%%         fib(N) ->
-%%           fib(N-1) + fib(N-2)
-%%
-%%         In the example above, fib(N-2) will be called immediately
-%%         after fib(N-1) is returned, making them have the same MFA
-%%         and Depth.
-%%
-%%      To check this, we need to see if the the new line is either in
-%%      the other clause of the same function or it is in the same clause
-%%      but the new line is equal or smaller than the previous line.
--spec is_tail_call([clause_struct()], non_neg_integer(), non_neg_integer())
-                  -> boolean().
-is_tail_call(ClauseStructs, PreviousLine, NewLine) ->
-  edts_rte_app:debug("8) is_tail_call:~p~n"
-            , [[ClauseStructs, PreviousLine, NewLine]]),
-  {LineSmallerClauses, _LineBiggerClauses} =
-    lists:splitwith(fun(#clause_struct{line = L}) ->
-                      L =< NewLine
-                    end, ClauseStructs),
-  edts_rte_app:debug("9) LineSmaller:~p~nLineBigger:~p~n"
-            , [LineSmallerClauses, _LineBiggerClauses]),
-  #clause_struct{touched = Touched, line = L} =
-    hd(lists:reverse(LineSmallerClauses)),
-  case Touched of
-    false -> true;
-    true  ->
-      %% assert
-      true = PreviousLine >= L,
-      %% if previous line is bigger or equal than the new line, then it
-      %% should be a tail recursion
-      PreviousLine >= NewLine
-  end.
+%% @doc replace the temporary variables with the actual value in a function
+-spec replace_value_in_fun( FunBody       :: string()
+                          , AllClausesLn  :: #clause_struct{}
+                          , Bindings      :: edts_rte_server:bindings())
+                          -> string().
+replace_value_in_fun(AbsForm, AllClausesLn, Bindings) ->
+  %% Replace variable names with variables' value and
+  %% combine the Token to function string again
+  NewFunBody            = do_var_to_val_in_fun( AbsForm
+                                              , AllClausesLn
+                                              , Bindings),
+  %% edts_rte_app:debug("New Body before flatten: ~p~n", [NewFunBody]),
+  NewForm               = erl_pp:form(NewFunBody),
+  lists:flatten(NewForm).
 
 %%%_* Internal =================================================================
 %% @doc Extract all the line numbers of a list of clauses in the abstract form
@@ -326,6 +234,98 @@ extract(Expr, F) ->
     L when is_list(L) -> L;
     E                 -> [E]
   end.
+
+%% @doc if an atom is the name of an anonymous function. the format is like
+%%      the following:
+%%      "-Funname/Arity-fun-N-"
+%%      where Funname is the name of the function, Arity is the number of
+%%      the arguments the function would take and N is the sequence of the
+%%      anonymous function defined in Funname.
+-spec is_lambda(Function :: atom()) ->
+                   {true, function(), arity(), integer()} | false.
+is_lambda(Function) ->
+  FuncStr = atom_to_list(Function),
+  case re:run(FuncStr, "-(.*)/(.*)-fun-(.*)-", [{capture, [1,2,3], list}]) of
+    {match, [FatherFunStr, FatherArityStr, DefinedSeq]} ->
+      {true, list_to_atom(FatherFunStr),
+             list_to_integer(FatherArityStr),
+             list_to_integer(DefinedSeq)};
+    nomatch ->
+      false
+  end.
+
+%% @doc get the abstract code for an lambda function.
+-spec get_lambda_abscode( module(), function(), arity()
+                        , non_neg_integer(), function()) -> {ok, func_form()}.
+get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function) ->
+  {ok, FunAbsForm} = edts_code:get_function_abscode( Module
+                                                   , FatherFun, FatherArity),
+  {ok, normalize_fun( lists:nth( DefSeq+1
+                               , extract_lambda_abscode_from_fun(FunAbsForm))
+                    , Function)}.
+
+%% @doc extract the abstract code for an lambda function from its parent
+%%      function abstract code.
+extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
+  lists:sort(fun( {'fun', L1, {clauses, _Clauses1}}
+                , {'fun', L2, {clauses, _Clauses2}}) ->
+                 L2 > L1
+             end, extract_lambda_abscode_from_clauses(Clauses)).
+
+%% @doc extract the abstract code for all the lambda function in a list
+%%      of the clauses, in the order of their definition.
+extract_lambda_abscode_from_clauses(Clauses) ->
+  lists:foldl(fun(Clause, Acc) ->
+                extract_lambda_abscode_from_clause(Clause) ++ Acc
+              end, [], Clauses).
+
+%% @doc extract the abstract code for a lambda function from a clause
+extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
+  lists:foldl(fun(Expr, Acc) ->
+                extract_lambda_abscode_from_expr(Expr) ++ Acc
+              end, [], Exprs).
+
+%% @doc extract the abstract code for a lambda function from an expression
+%% TODO: Need to extract the labmda abscode from more expressions.
+%%       Really want a simpler way way of handling this.
+extract_lambda_abscode_from_expr({'case', _L, CaseExpr, Clauses}) ->
+  extract_lambda_abscode_from_expr(CaseExpr) ++
+    extract_lambda_abscode_from_clauses(Clauses);
+extract_lambda_abscode_from_expr({match, _L, _LExpr0, RExpr0}) ->
+  extract_lambda_abscode_from_expr(RExpr0);
+extract_lambda_abscode_from_expr({call, _L1, {remote, _L2, _M, _F}, Args}) ->
+  lists:foldl(fun(Arg, Acc) ->
+                extract_lambda_abscode_from_expr(Arg) ++ Acc
+              end, [], Args);
+extract_lambda_abscode_from_expr({'fun', _L, {clauses, Clauses}} = AbsCode) ->
+  [AbsCode|extract_lambda_abscode_from_clauses(Clauses)];
+extract_lambda_abscode_from_expr(_) ->
+  [].
+
+do_traverse_clause_group([], _Line) ->
+  [];
+do_traverse_clause_group(SmallerClassesGroup, Line) ->
+  Reversed = lists:reverse(SmallerClassesGroup),
+  lists:reverse([traverse_clause_struct(Line, hd(Reversed))|tl(Reversed)]).
+
+do_traverse_clause_struct([], _line, _Touched) ->
+  [];
+do_traverse_clause_struct(SmallerLnClauses, Line, Touched) ->
+  [ClauseStruct|T] = lists:reverse(SmallerLnClauses),
+  %% check if other clauses in the same group has been touched.
+  case Touched of
+    true  -> case ClauseStruct#clause_struct.touched of
+               true  -> lists:reverse([touch_clause(ClauseStruct, Line)|T]);
+               false -> SmallerLnClauses
+             end;
+    false -> lists:reverse([touch_clause(ClauseStruct, Line)|T])
+  end.
+
+touch_clause(ClauseStruct, Line) ->
+  SubClauseStruct0 = ClauseStruct#clause_struct.sub_clause,
+  SubClauseStruct  = traverse_clause_struct(Line, SubClauseStruct0),
+  ClauseStruct#clause_struct{ touched = true
+                            , sub_clause = SubClauseStruct}.
 
 %% @doc replace variable names with values for a function
 do_var_to_val_in_fun( {'fun', L, {clauses, Clauses0}}

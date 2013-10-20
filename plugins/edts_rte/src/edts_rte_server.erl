@@ -437,8 +437,8 @@ update_mfa_info_tree( {Mod, Fun, Arity}, Depth, Line, Bindings
       %% assert that it can not be a tail call here. because
       %% the tail call scenario should be handled by the
       %% ancester of this element already.
-      false  = edts_rte_util:is_tail_call( MFAInfo#mfa_info.clause_structs
-                                         , MFAInfo#mfa_info.line, Line),
+      false  = edts_rte_util:is_tail_recursion( MFAInfo#mfa_info.clause_structs
+                                              , MFAInfo#mfa_info.line, Line),
 
       %% the interpreter steps forward within the same function, so
       %% just need to update the current mfa_info.
@@ -532,9 +532,9 @@ add_sibling_p(MFAInfo, NewKey, NewLine, NewDepth) ->
     true  ->
       %% this will rule out the case where we are stepping within
       %% the same function clause.
-      edts_rte_util:is_tail_call( MFAInfo#mfa_info.clause_structs
-                                , MFAInfo#mfa_info.line
-                                , NewLine);
+      edts_rte_util:is_tail_recursion( MFAInfo#mfa_info.clause_structs
+                                     , MFAInfo#mfa_info.line
+                                     , NewLine);
     false ->
       {_M, _F, _A, Depth} = MFAInfo#mfa_info.key,
       NewDepth =:= Depth
