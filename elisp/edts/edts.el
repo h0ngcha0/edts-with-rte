@@ -22,6 +22,8 @@
 ;; You should have received a copy of the GNU Lesser General Public License
 ;; along with EDTS. If not, see <http://www.gnu.org/licenses/>.
 
+(require 'edts-event)
+
 (defcustom edts-erl-command
   (or (executable-find "erl")
       (null
@@ -56,9 +58,27 @@ node."
   "The node-name of current-buffer")
 (make-variable-buffer-local 'edts-buffer-node-name)
 
+(defvar edts-server-down-hook nil
+  "Hooks to be run after the EDTS server has gone down")
+
 (defvar edts-after-node-init-hook nil
   "Hooks to run after a node has been initialized.")
 
+(defvar edts-node-down-hook nil
+  "Hooks to run after a node has gone down. These hooks are called with
+the node-name of the node that has gone down as the argument.")
+
+(defun edts-event-handler (node class type info)
+  (case type
+    (node_down
+     (let ((node (cdr (assoc 'node info))))
+       (edts-log-info "Node %s down" node)
+       (run-hook-with-args 'edts-node-down-hook node)))
+    (server_down
+     (edts-log-info "EDTS server down")
+     (setq edts--outstanding-node-registration-requests nil)
+     (run-hooks 'edts-server-down-hook))))
+(edts-event-register-handler 'edts-event-handler 'edts)
 
 (defun edts-buffer-node-name ()
   "Print the node sname of the erlang node connected to current
@@ -199,11 +219,13 @@ in a tooltip."
          (module   (car mfa))
          (function (cadr mfa))
          (arity    (caddr mfa)))
+    (unless (and module function arity)
+      (error "Could not parse MFA at point"))
     (edts-show-tooltip
      (condition-case ex
-        (edts-man-extract-function-entry module function)
-        ('error
-         (edts-extract-doc-from-source module function arity))))))
+         (edts-man-extract-function-entry module function)
+       ('error
+        (edts-extract-doc-from-source module function arity))))))
 
 (defun edts-show-tooltip (text)
   "Show a tooltip using either popup.el or pos-tip.el"
@@ -268,17 +290,19 @@ for ARITY will give a regexp matching any arity."
     (error "EDTS: Server already running"))
   (let* ((pwd (path-util-join (directory-file-name edts-lib-directory) ".."))
          (command (list "./start" edts-data-directory edts-erl-command))
-         (retries 10)
-         started
+         (retries 20)
          available)
     (edts-shell-make-comint-buffer "*edts*" "edts" pwd command)
-    (while (and (> retries 0) (or (not started)
-                                  (not available)))
-      (setq started (edts-node-started-p "edts"))
+    (setq available (edts-get-nodes t))
+    (while (and (> retries 0) (not available))
       (setq available (edts-get-nodes t))
-      (sit-for 0.5)
+      (sit-for 0.2)
       (decf retries))
+    (when available
+      (edts-log-info "Started EDTS server")
+      (edts-event-listen))
     available))
+
 
 (defun edts-ensure-node-not-started (node-name)
   "Signals an error if a node of name NODE-NAME is running on
@@ -304,64 +328,68 @@ localhost."
       (setq string (cdr string)))
     names))
 
+(defcustom edts-async-node-init t
+  "Whether or not node initialization should be synchronous")
+
+(defvar edts--pending-node-startups nil
+  "List of nodes that we are waiting on to get ready for registration.")
+
+(defvar edts--outstanding-node-registration-requests nil
+  "List of nodes for which there are outstanding async registration
+requests.")
+
 (defun edts-init-node-when-ready (project-name
                                   node-name
                                   root
                                   libs
                                   &optional
                                   app-include-dirs
-                                  project-include-dirs)
-  "Once NODE-NAME is registered with epmd, register it with the edts"
-  (let ((retries 5))
-    (edts-log-debug "Waiting for node %s to start, (retries %s)"
+                                  project-include-dirs
+                                  &optional retries)
+  "Once NODE-NAME is registered with epmd, register it with the edts server."
+  (add-to-list 'edts--pending-node-startups node-name)
+  (let ((retries (or retries 5)))
+    (edts-log-debug "Waiting for node %s to start (retries %s)"
                     node-name
                     retries)
-    (while (and (> retries 0) (not (edts-node-started-p node-name)))
-      (sleep-for 0.5)
-      (decf retries))
     (if (not (edts-node-started-p node-name))
-        (null (edts-log-error "Node %s failed to start." node-name))
+        (if (> retries 0)
+            ;; Wait same more
+            (if edts-async-node-init
+                (run-with-idle-timer 0.5
+                                     nil
+                                     'edts-init-node-when-ready
+                                     project-name
+                                     node-name
+                                     root
+                                     libs
+                                     app-include-dirs
+                                     project-include-dirs
+                                     (1- retries))
+              ;; Synchronous init
+              (sit-for 0.5)
+              (edts-init-node-when-ready project-name
+                                         node-name
+                                         root
+                                         libs
+                                         app-include-dirs
+                                         project-include-dirs
+                                         (1- retries)))
+          ;; Give up
+          (setq edts--pending-node-startups
+                (remove node-name edts--pending-node-startups))
+          (null (edts-log-error "Node %s failed to start." node-name)))
+      ;; Node started, remove it from list of pending nodes and start
+      ;; initialization.
+      (edts-log-info "Node %s started" node-name)
+      (setq edts--pending-node-startups
+            (remove node-name edts--pending-node-startups))
       (edts-init-node project-name
                       node-name
                       root
                       libs
                       app-include-dirs
-                      project-include-dirs)
-      (run-hooks 'edts-after-node-init-hook)
-      t)))
-
-(defun edts-init-node-async (project-name
-                             node-name
-                             root
-                             libs
-                             app-include-dirs
-                             project-include-dirs)
-  "Register NODE-NAME with the EDTS server asynchronously."
-  (interactive (list (eproject-attribute :name)
-                     (edts-node-name)
-                     (eproject-attribute :root)
-                     (eproject-attribute :lib-dirs)
-                     (eproject-attribute :app-include-dirs)
-                     (eproject-attribute :project-include-dirs)))
-  (let* ((resource (list "nodes" node-name))
-         (args     (list (cons "project_name"         project-name)
-                         (cons "project_root"         root)
-                         (cons "project_lib_dirs"     libs)
-                         (cons "app_include_dirs"     app-include-dirs)
-                         (cons "project_include_dirs" project-include-dirs)))
-         (cb-args  (list node-name)))
-    (edts-rest-post-async resource
-                          args
-                          #'edts-init-node-async-callback
-                          cb-args)))
-
-(defun edts-init-node-async-callback (reply node-name &rest rest)
-  "Handle the result of an asynchronous node registration."
-  (let ((result (cadr (assoc 'result reply))))
-    (if (and result (eq (string-to-number result) 201))
-        (edts-log-debug "Successfuly intialized node %s" node-name)
-      (null
-       (edts-log-error "Failed to initialize node %s" node-name)))))
+                      project-include-dirs))))
 
 (defun edts-init-node (project-name
                        node-name
@@ -369,66 +397,43 @@ localhost."
                        libs
                        app-include-dirs
                        project-include-dirs)
-  "Register NODE-NAME with the EDTS server.
+  "Register NODE-NAME with the EDTS server asynchronously."
+  (unless (member node-name edts--outstanding-node-registration-requests)
+    (edts-log-debug "Initializing node %s" node-name)
+    (add-to-list 'edts--outstanding-node-registration-requests node-name)
+    (interactive (list (eproject-attribute :name)
+                       (edts-node-name)
+                       (eproject-attribute :root)
+                       (eproject-attribute :lib-dirs)
+                       p(eproject-attribute :app-include-dirs)
+                       (eproject-attribute :project-include-dirs)))
+    (let* ((resource (list "nodes" node-name))
+           (args     (list (cons "project_name"         project-name)
+                           (cons "project_root"         root)
+                           (cons "project_lib_dirs"     libs)
+                           (cons "app_include_dirs"     app-include-dirs)
+                           (cons "project_include_dirs" project-include-dirs)))
+           (cb-args  (list node-name)))
+      (if edts-async-node-init
+          (edts-rest-post-async resource
+                                args
+                                #'edts-init-node-async-callback
+                                cb-args)
+        (let ((reply (edts-rest-post resource args)))
+          (edts-init-node-async-callback reply node-name))))))
 
-If called interactively, fetch arguments from project of
-current-buffer."
-  (interactive (list (eproject-attribute :name)
-                     (edts-node-name)
-                     (eproject-attribute :root)
-                     (eproject-attribute :lib-dirs)
-                     (eproject-attribute :app-include-dirs)
-                     (eproject-attribute :project-include-dirs)))
-  (let ((retries 5))
-    (while (and (> retries 0)
-                (not (edts-try-init-node project-name
-                                         node-name
-                                         root
-                                         libs
-                                         app-include-dirs
-                                         project-include-dirs)))
-      (edts-log-error "Failed to register node %s, Retrying (%s attempts left)"
-                      node-name
-                      retries)
-      (decf retries))
-    (if (edts-node-registeredp node-name t)
-        t
-      (null (edts-log-error "Failed to register node '%s'" node-name)))))
+(defun edts-init-node-async-callback (reply node-name)
+  "Handle the result of an asynchronous node registration."
+  (setq edts--outstanding-node-registration-requests
+        (remove node-name edts--outstanding-node-registration-requests))
+  (let ((result (cadr (assoc 'result reply))))
+    (if (and result (eq (string-to-number result) 201))
+        (progn
+          (edts-log-info "Successfuly intialized node %s" node-name)
+          (run-hooks 'edts-after-node-init-hook))
+      (null
+       (edts-log-error "Failed to initialize node %s" node-name)))))
 
-(defun edts-try-init-node (project-name
-                           node-name
-                           root
-                           libs
-                           app-include-dirs
-                           project-include-dirs)
-  "Initialize NODE-NAME with the edts node."
-  (edts-log-debug "Registering node %s, (retries %s)" node-name retries)
-  (let* ((resource (list "nodes" node-name))
-         (args     (list (cons "project_name"         project-name)
-                         (cons "project_root"         root)
-                         (cons "project_lib_dirs"     libs)
-                         (cons "app_include_dirs"     app-include-dirs)
-                         (cons "project_include_dirs" project-include-dirs)))
-         (res      (edts-rest-post resource args)))
-    (if (equal (cdr (assoc 'result res)) '("201" "Created"))
-        res
-      (null (edts-log-error "Unexpected reply: %s"
-                            (cdr (assoc 'result res)))))))
-
-
-(defun edts-get-who-calls (module function arity)
-  "Fetches a list of all function calling  MODULE:FUNCTION/ARITY on
-current buffer's project node."
-  (let* ((resource (list "nodes" (edts-node-name)
-                         "modules" module
-                         "functions" function
-                         (number-to-string arity)
-                         "callers"))
-         (res      (edts-rest-get resource nil)))
-    (if (equal (assoc 'result res) '(result "200" "OK"))
-        (cdr (assoc 'body res))
-        (null
-         (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
 
 (defun edts-get-function-info (module function arity)
   "Fetches info MODULE on the current buffer's project node associated with
@@ -511,19 +516,6 @@ buffer"
         (null
          (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
 
-(defun edts-get-module-xref-analysis-async (modules checks callback)
-  "Run xref-checks on MODULE on the node associated with current buffer,
-asynchronously. When the request terminates, call CALLBACK with the
-parsed response as the single argument"
-  (let* ((node-name (edts-node-name))
-         (resource  (list "nodes" node-name
-                          "xref_analysis"))
-         (rest-args `(("xref_checks" . ,(mapcar #'symbol-name checks))
-                      ("modules"     . ,modules)))
-         (cb-args   (list callback 200)))
-    (edts-log-debug
-     "fetching xref-analysis of %s async on %s" modules node-name)
-    (edts-rest-get-async resource rest-args #'edts-async-callback cb-args)))
 
 (defun edts-get-module-eunit-async (module callback)
   "Run eunit tests in MODULE on the node associated with current-buffer,
@@ -564,6 +556,19 @@ CALLBACK with the parsed response as the single argument."
      "running dialyzer on %s async on %s" modules node-name)
     (edts-rest-get-async resource args #'edts-async-callback cb-args)))
 
+(defun edts-pretty-print-term (term-str indent max-col)
+  "Pretty-print the term represented by TERM-STR, indenting it INDENT
+spaces and breaking lines at column MAX-COL."
+  (let* ((resource '("pretty_print"))
+         (rest-args `(("string" .   ,term-str)
+                      ("indent" .   ,(number-to-string indent))
+                      ("max_column" ,(number-to-string max-col))))
+         (res         (edts-rest-get resource rest-args )))
+    (if (equal (assoc 'result res) '(result "200" "OK"))
+        (cdr (assoc 'return (cdr (assoc 'body res))))
+      (null
+       (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
+
 
 (defun edts-async-callback (reply callback expected &rest args)
   "Generic callback-function for handling the reply of rest-requests.
@@ -583,70 +588,6 @@ associated with that buffer."
   (let ((info (edts-get-detailed-module-info (or module (ferl-get-module)))))
     (cdr (assoc 'includes info)))) ;; Get all includes
 
-(defun edts-toggle-breakpoint (node-name module line)
-  "Add/remove breakpoint in MODULE at LINE. This does not imply that MODULE becomes
-interpreted."
-  (let* ((resource
-          (list "debugger" node-name "breakpoints" module line))
-         (args '())
-         (res (edts-rest-post resource args)))
-    (if (equal (assoc 'result res) '(result "201" "Created"))
-        (cdr (assoc 'body res))
-      (null (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
-
-(defun edts-get-breakpoints (node-name)
-  "Get all breakpoints and related info on NODE-NAME."
-  (let* ((resource
-          (list "debugger" node-name "breakpoints"))
-         (args '())
-         (res (edts-rest-get resource args)))
-    (if (equal (assoc 'result res) '(result "200" "OK"))
-        (cdr (assoc 'body res))
-      (null (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
-
-(defun edts-wait-for-debugger (node-name)
-  "Wait for the debugger to attach and return the current interpreter state"
-  (edts--send-debugger-command-async node-name "wait_for_debugger"
-                                     #'(lambda (result)
-                                         (if (equal (assoc 'result result)
-                                                    '(result "200" "OK"))
-                                             (edts-debug-handle-debugger-reply
-                                              (cdr (assoc 'body result)))))))
-
-(defun edts-step-into (node-name)
-  "When debugging, perform a step-into"
-  (edts--send-debugger-command node-name "debugger_step"))
-
-(defun edts-continue (node-name)
-  "When debugging, continue execution until the next breakpoint or termination"
-  (edts--send-debugger-command node-name "debugger_continue"))
-
-(defun edts-step-out (node-name)
-  "When debugging, step out of the current function"
-  (edts--send-debugger-command node-name "debugger_step_out"))
-
-(defun edts-debug-stop (node-name)
-  "Stop debugging"
-  (edts--send-debugger-command node-name "debugger_stop"))
-
-(defun edts--send-debugger-command (node-name command)
-  "Convenience function to send COMMAND to the debugger at NODE-NAME"
-  (let* ((resource
-          (list "debugger" node-name))
-         (args (list (cons "cmd" command)))
-         (res (edts-rest-post resource args)))
-    (if (equal (assoc 'result res) '(result "201" "Created"))
-        (cdr (assoc 'body res))
-      (null (edts-log-error "Unexpected reply: %s" (cdr (assoc 'result res)))))))
-
-(defun edts--send-debugger-command-async (node-name command callback)
-  "Convenience function to send COMMAND to the debugger at NODE-NAME,
-executing CALLBACK when a reply is received"
-  (let* ((resource
-          (list "debugger" node-name))
-         (args (list (cons "cmd" command))))
-    (edts-rest-get-async resource args callback '())))
-
 (defun edts-node-registeredp (node &optional no-error)
   "Return non-nil if NODE is registered with the EDTS server."
   (member node (edts-get-nodes no-error)))
@@ -665,13 +606,18 @@ non-nil, don't report an error if the request fails."
 (defun edts--node-memberp (node nodes)
   (some #'(lambda (reg-node) (string-match (concat node "@") reg-node))))
 
+(defvar edts-node-name nil
+  "Used to manually set the project node-name to use in a buffer
+that is not part of a project")
+(make-variable-buffer-local 'edts-node-name)
+
 (defun edts-node-name ()
   "Return the sname of current buffer's project node."
   (condition-case ex
       (eproject-attribute :node-sname)
-    ('error (edts-shell-node-name))))
+    ('error edts-node-name)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Unit tests
+;; Tests
 
 (provide 'edts)

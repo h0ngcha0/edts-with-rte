@@ -51,13 +51,30 @@
           (delete-if (lambda (x) (equal (car x) root))
                      eproject-attributes-alist)))
 
-(defun edts-test-cleanup-all-buffers ()
+(defvar edts-test-pre-test-buffer-list nil
+  "The buffer list prior to running tests.")
+
+(defun edts-test-pre-cleanup-all-buffers ()
   (interactive)
   (edts-shell-kill-all)
   (dolist (buf (buffer-list))
-    (when (and (buffer-live-p buf) (buffer-local-value 'edts-mode buf))
-      (kill-buffer buf)
-      (edts-log-info "Killed %s" buf))))
+    (when (and
+           (buffer-live-p buf)
+           edts-mode
+           (kill-buffer buf))
+      (edts-log-debug "Killed %s" buf)))
+  (setq edts-test-pre-test-buffer-list (buffer-list)))
+
+(defun edts-test-post-cleanup-all-buffers ()
+  (interactive)
+  (edts-shell-kill-all)
+  (dolist (buf (buffer-list))
+    (when (and (buffer-live-p buf)
+               (buffer-file-name buf)
+               (not (member buf edts-test-pre-test-buffer-list)))
+          (kill-buffer buf)
+      (edts-log-debug "Killed %s" buf)))
+  (setq edts-test-pre-test-buffer-list nil))
 
 (defmacro edts-test-case (suite name args desc &rest body)
   "Define a testcase in SUITE. All other arguments are the same is in
@@ -72,8 +89,6 @@
 
 (defmacro edts-test-add-suite (suite-name &optional setup teardown)
   (assert (symbolp suite-name))
-  ;; (assert (or (functionp setup) (null setup)))
-  ;; (assert (or (functionp teardown) (null teardown)))
   (let ((alistvar (make-symbol "alist")))
 
     `(let ((,alistvar (remove-if #'(lambda (suite)
@@ -112,7 +127,7 @@
               (setq exit-status 1))))
         (kill-emacs exit-status))
     (progn
-      (message "Error running tests")
+      (edts-log-error "Error running tests")
       (backtrace)
       (kill-emacs 2))))
 
@@ -140,7 +155,7 @@
   (edts-test-run-testcase 'ert-run-tests-interactively test-name))
 
 (defun edts-test-run-testcase (ert-fun test-name)
-  (let* ((ert-test-obj (car (ert-select-tests 'edts-project-selector-test t)))
+  (let* ((ert-test-obj (car (ert-select-tests test-name t)))
          (suite-name (car (remq 'edts-test-suite (ert-test-tags ert-test-obj))))
          (suite (cdr (assoc suite-name edts-test-suite-alist))))
     (when suite

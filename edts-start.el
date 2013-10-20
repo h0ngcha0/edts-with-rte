@@ -97,9 +97,9 @@ Must be preceded by `erlang-font-lock-keywords-macros' to work properly.")
 (defconst erlang-auto-highlight-exclusions
   (cons (quote erlang-mode)
                (concat
-                "\\(" erlang-operators-regexp
+                "^\\(" erlang-operators-regexp
                 "\\|" erlang-keywords-regexp
-                "\\|\\<[[:digit:]]+\\>\\)")))
+                "\\|\\<[[:digit:]]+\\>\\)$")))
 
 (defvar erlang-current-function-ahs-plugin
   '((name    . "erlang current function")
@@ -119,11 +119,13 @@ Must be preceded by `erlang-font-lock-keywords-macros' to work properly.")
 (defadvice eproject--all-types (around edts-eproject-types)
   "Ignore irrelevant eproject types for files where we should really only
 consider EDTS."
-  (let ((re (eproject--combine-regexps edts-erlang-mode-regexps))
+  (let ((re (eproject--combine-regexps
+             (cons "^\\.edts$" edts-erlang-mode-regexps)))
         (file-name (buffer-file-name)))
     ;; dired buffer has no file
-    (if (and file-name (string-match re file-name))
-        (setq ad-return-value '(generic edts edts-temp edts-otp))
+    (if (and file-name
+             (string-match re (path-util-base-name file-name)))
+        (setq ad-return-value '(edts-otp edts-temp edts generic))
       ad-do-it)))
 (ad-activate-regexp "edts-eproject-types")
 
@@ -141,8 +143,6 @@ consider EDTS."
     (define-key map "\C-c\C-d\S-f" 'edts-find-global-function)
     (define-key map "\C-c\C-dH"    'edts-find-doc)
     (define-key map "\C-c\C-dh"    'edts-show-doc-under-point)
-    (define-key map "\C-c\C-dw"    'edts-who-calls)
-    (define-key map "\C-c\C-dW"    'edts-last-who-calls)
     (define-key map "\C-c\C-d\C-b" 'ferl-goto-previous-function)
     (define-key map "\C-c\C-d\C-f" 'ferl-goto-next-function)
     (define-key map "\C-c\C-de"    'edts-ahs-edit-current-function)
@@ -155,6 +155,17 @@ consider EDTS."
 
 (defvar edts-mode-hook nil
   "Hooks to run at the end of edts-mode initialization in a buffer.")
+
+(defvar edts-orig-left-margin nil
+  "The original value of a buffer's left-margin width")
+(make-variable-buffer-local 'edts-orig-left-margin)
+
+(defvar edts-inhibit-fringe-markers nil
+  "If non-nil, do not display markers in the fringe for errors etc.")
+
+(defcustom edts-marker-fringe 'left-fringe
+  "Which side to display fringe-markers on. The value must be either
+left-fringe or right-fringe.")
 
 (defun edts-setup ()
   (edts-log-debug "Setting up edts-mode in buffer %s" (current-buffer))
