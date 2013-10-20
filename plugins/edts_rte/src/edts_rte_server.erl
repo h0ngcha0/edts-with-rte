@@ -173,7 +173,7 @@ init([]) ->
   %% records in erlang are purely syntactic sugar. create a table to store the
   %% mapping between records and their definitions.
   %% set the table to public to make debugging easier
-  edts_rte_records:init(),
+  edts_rte_records:init_backend(),
   {ok, #rte_state{}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
@@ -215,7 +215,7 @@ handle_call(list_record_names, _From, State) ->
 handle_call({forget_record_defs, ''}, _From, State) ->
   %% if user didn't specify a record name, delete all the entries from
   %% the record definition table.
-  edts_rte_records:delete_stored_records(),
+  ok   = edts_rte_records:delete_stored_records(),
   Msg  = make_record_return_message('all records', " are forgotten"),
   {reply, {ok, Msg}, State};
 handle_call({forget_record_defs, RecordName}, _From, State) ->
@@ -308,7 +308,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%_* Internal =================================================================
 %% @doc Read and store the record definitions from the specified module.
 update_record_definition(Module) ->
-  AddedRds  = edts_rte_records:read_and_add_records(Module),
+  AddedRds  = edts_rte_records:load_records(Module),
   Msg       = lists:flatten(
                 io_lib:format("Added record definitions:~p", [AddedRds])),
   edts_rte_app:debug(Msg),

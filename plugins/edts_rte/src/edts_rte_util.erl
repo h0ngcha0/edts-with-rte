@@ -42,6 +42,7 @@
 -type clause_struct() :: #clause_struct{}.
 
 %%%_* API ======================================================================
+%%------------------------------------------------------------------------------
 %% @doc convert the argument list in the string format into the erlang term
 -spec convert_list_to_term(Arguments :: string()) -> [any()].
 convert_list_to_term(Arguments) ->
@@ -62,6 +63,7 @@ convert_list_to_term(Arguments) ->
   edts_rte_app:debug("args evaluated:~p~n", [Value]),
   Value.
 
+%%------------------------------------------------------------------------------
 %% @doc Extract all the line numbers of all the clauses from an abstract form
 %%      for both anonymous function and normal function
 -type line_no()   :: non_neg_integer().
@@ -74,6 +76,7 @@ extract_fun_clauses_line_num({'fun', _L, {clauses, Clauses}}) ->
 extract_fun_clauses_line_num({function, _L, _Func, _Arity, Clauses}) ->
   extract_clauses_line_num(Clauses).
 
+%%------------------------------------------------------------------------------
 %% @doc get the abstract code of a function. support anonymous
 %%      function as well
 -spec get_function_abscode(module(), function(), arity()) ->
@@ -86,6 +89,7 @@ get_function_abscode(Module, Function, Arity) ->
       get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function)
   end.
 
+%%------------------------------------------------------------------------------
 %% @doc When MFA and depth are the same, check if it is still a
 %%      differnet function call.
 %%      This could happen when:
@@ -126,6 +130,7 @@ is_tail_recursion(ClauseStructs, PreviousLine, NewLine) ->
       PreviousLine >= NewLine
   end.
 
+%%------------------------------------------------------------------------------
 %% @doc traverse all the clauses and mark all the touched node
 %%      if one of the clause in a group of clauses are touched,
 %%      do not touch the rest of the clause.
@@ -153,6 +158,7 @@ traverse_clause_struct(Line, ClauseStructs) ->
   do_traverse_clause_struct(SmallerLnClauses, Line, Touched) ++
     BiggerOrEqualLnClauses.
 
+%%------------------------------------------------------------------------------
 %% @doc replace the temporary variables with the actual value in a function
 -spec replace_value_in_fun( FunBody       :: string()
                           , AllClausesLn  :: #clause_struct{}
@@ -169,6 +175,7 @@ replace_value_in_fun(AbsForm, AllClausesLn, Bindings) ->
   lists:flatten(NewForm).
 
 %%%_* Internal =================================================================
+%%------------------------------------------------------------------------------
 %% @doc Extract all the line numbers of a list of clauses in the abstract form
 -spec extract_clauses_line_num([clause_form()]) -> [clause_struct()].
 extract_clauses_line_num([]) ->
@@ -178,6 +185,7 @@ extract_clauses_line_num([{clause,L,_ArgList0,_WhenList0,Exprs0}|T]) ->
   [ #clause_struct{line = L, sub_clause = ExprsLn}
   | extract_clauses_line_num(T)].
 
+%%------------------------------------------------------------------------------
 %% @doc Extract all the line numbers of the clauses from a list of expressions
 %%      in the abstract form
 extract_exprs_line_num(Exprs) ->
@@ -188,6 +196,7 @@ extract_exprs_line_num(Exprs) ->
                 end
               end, [], Exprs).
 
+%%------------------------------------------------------------------------------
 %% @doc Extract all the line numbers of the clauses from an expression in the
 %%      abstract form
 extract_expr_line_num(Exprs) when is_list(Exprs)         ->
@@ -235,6 +244,7 @@ extract(Expr, F) ->
     E                 -> [E]
   end.
 
+%%------------------------------------------------------------------------------
 %% @doc if an atom is the name of an anonymous function. the format is like
 %%      the following:
 %%      "-Funname/Arity-fun-N-"
@@ -254,6 +264,7 @@ is_lambda(Function) ->
       false
   end.
 
+%%------------------------------------------------------------------------------
 %% @doc get the abstract code for an lambda function.
 -spec get_lambda_abscode( module(), function(), arity()
                         , non_neg_integer(), function()) -> {ok, func_form()}.
@@ -264,6 +275,7 @@ get_lambda_abscode(Module, FatherFun, FatherArity, DefSeq, Function) ->
                                , extract_lambda_abscode_from_fun(FunAbsForm))
                     , Function)}.
 
+%%------------------------------------------------------------------------------
 %% @doc extract the abstract code for an lambda function from its parent
 %%      function abstract code.
 extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
@@ -272,6 +284,7 @@ extract_lambda_abscode_from_fun({function, _L, _Name, _Arity, Clauses}) ->
                  L2 > L1
              end, extract_lambda_abscode_from_clauses(Clauses)).
 
+%%------------------------------------------------------------------------------
 %% @doc extract the abstract code for all the lambda function in a list
 %%      of the clauses, in the order of their definition.
 extract_lambda_abscode_from_clauses(Clauses) ->
@@ -279,12 +292,14 @@ extract_lambda_abscode_from_clauses(Clauses) ->
                 extract_lambda_abscode_from_clause(Clause) ++ Acc
               end, [], Clauses).
 
+%%------------------------------------------------------------------------------
 %% @doc extract the abstract code for a lambda function from a clause
 extract_lambda_abscode_from_clause({clause, _L, _ArgList, _WhenList, Exprs}) ->
   lists:foldl(fun(Expr, Acc) ->
                 extract_lambda_abscode_from_expr(Expr) ++ Acc
               end, [], Exprs).
 
+%%------------------------------------------------------------------------------
 %% @doc extract the abstract code for a lambda function from an expression
 %% TODO: Need to extract the labmda abscode from more expressions.
 %%       Really want a simpler way way of handling this.
@@ -327,6 +342,7 @@ touch_clause(ClauseStruct, Line) ->
   ClauseStruct#clause_struct{ touched = true
                             , sub_clause = SubClauseStruct}.
 
+%%------------------------------------------------------------------------------
 %% @doc replace variable names with values for a function
 do_var_to_val_in_fun( {'fun', L, {clauses, Clauses0}}
                     , AllClausesLn, Bindings) ->
@@ -337,6 +353,7 @@ do_var_to_val_in_fun( {function, L, FuncName, Arity, Clauses0}
   Clauses = replace_value_in_clauses(Clauses0, AllClausesLn, Bindings),
   {function, L, FuncName, Arity, Clauses}.
 
+%%------------------------------------------------------------------------------
 %% @doc replace variable names with values in each of the clauses for
 %%      anonymous functions.
 %%      there are two differences between this function and @see
@@ -371,6 +388,7 @@ extract_var(_) ->
 replace_value_in_clauses(Clauses, AllClausesLn, Binding) ->
   replace_value_in_clauses(Clauses, AllClausesLn, Binding, false).
 
+%%------------------------------------------------------------------------------
 %% @doc replace variable names with values in each of the clauses
 replace_value_in_clauses(Clauses, AllClausesLn, Binding, ExpandRecord) ->
   lists:map(fun({clause,L,_ArgList0,_WhenList0,_Lines0} = Clause) ->
@@ -413,6 +431,7 @@ replace_value_in_exprs(Exprs, ExecClausesLn, Bindings, ExpandRcd) ->
               replace_value_in_expr(Expr, ExecClausesLn, Bindings, ExpandRcd)
             end, Exprs).
 
+%%------------------------------------------------------------------------------
 %% @doc replace the variable in the expression with its actual value
 %%      it takes two extra parameters. the line number of all the clauses
 %%      that were executed and the binding information.
@@ -559,6 +578,7 @@ get_tokens(ValStr) ->
   {ok, Tokens, _} = erl_scan:string(ValStr),
   Tokens.
 
+%%------------------------------------------------------------------------------
 %% @doc for values such as Pid and Func, which are not valid
 %%      erlang terms, convert them to atom and return back.
 %%      For tuples, we try to convert them to records if possible

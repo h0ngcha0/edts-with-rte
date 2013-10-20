@@ -27,23 +27,34 @@
 -export([ delete_stored_record/1
         , delete_stored_records/0
         , get_stored_records/0
-        , init/0
-        , read_and_add_records/1
+        , init_backend/0
+        , load_records/1
         , record_to_tuple/1
         , tuple_to_record/1
         ]).
 
 %%%_* API ======================================================================
-init() ->
+%%------------------------------------------------------------------------------
+%% @doc initialize the backend for storing record definitions
+-spec init_backend() -> atom().
+init_backend() ->
   ets:new(record_table_name(), [public, named_table]).
 
-read_and_add_records(Module) ->
+%%------------------------------------------------------------------------------
+%% @doc load the record definition from a module and put them into the storage
+-spec load_records(module()) -> [atom()].
+load_records(Module) ->
   read_and_add_records(Module, '_', [], [], record_table_name()).
 
+%%------------------------------------------------------------------------------
+%% @doc Convert a record form into its corresponding tuple form.
 record_to_tuple(Expr) ->
   UsedRecords = used_record_defs(Expr, record_table_name()),
   do_expand_records(UsedRecords, Expr).
 
+%%------------------------------------------------------------------------------
+%% @doc Convert a tuple form into its corresponding record form if possible, if
+%%      not possible, return the tuple form.
 tuple_to_record({tuple, L, []}) ->
   {tuple, L, []};
 tuple_to_record({tuple, L, [{atom, _L2, Name}|T]} = Tuple) ->
@@ -59,20 +70,27 @@ tuple_to_record({tuple, L, [{atom, _L2, Name}|T]} = Tuple) ->
 tuple_to_record({tuple, _L, _Exprs} = Tuple) ->
   Tuple.
 
+%%------------------------------------------------------------------------------
+%% @doc Get the name of all the stored records
+-spec get_stored_records() -> [atom()].
 get_stored_records() ->
   lists:map( fun(Record) -> element(1, Record) end
            , ets:tab2list(record_table_name())).
 
+%%------------------------------------------------------------------------------
+%% @doc Delete the definition of all the stored records
+-spec delete_stored_records() -> ok.
 delete_stored_records() ->
-  true = ets:delete_all_objects(record_table_name()).
+  true = ets:delete_all_objects(record_table_name()),
+  ok.
 
+%%------------------------------------------------------------------------------
+%% @doc Delete the definition of a particular records
+-spec delete_stored_record(atom()) -> ok | not_found.
 delete_stored_record(RecordName) ->
   case ets:lookup(record_table_name(), RecordName) of
-    [] ->
-      not_found;
-    [_RecordDef] ->
-      ets:delete(record_table_name(), RecordName),
-      ok
+    [_RecordDef] -> ets:delete(record_table_name(), RecordName), ok;
+    []           -> not_found
   end.
 
 %%%_* Internal =================================================================
@@ -156,8 +174,6 @@ prep_rec({atom,{value,_CommandN,_V}=Value,ok}) ->
 prep_rec(T) when is_tuple(T) -> list_to_tuple(prep_rec(tuple_to_list(T)));
 prep_rec([E | Es]) -> [prep_rec(E) | prep_rec(Es)];
 prep_rec(E) -> E.
-
-
 
 read_and_add_records(Module, Selected, Options, Bs, RT) ->
   Info             = edts_code:get_module_info(Module, basic),
