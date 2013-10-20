@@ -173,7 +173,7 @@ init([]) ->
   %% records in erlang are purely syntactic sugar. create a table to store the
   %% mapping between records and their definitions.
   %% set the table to public to make debugging easier
-  edts_rte_records:init(),
+  edts_rte_records:init_backend(),
   {ok, #rte_state{}}.
 
 handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
@@ -215,7 +215,7 @@ handle_call(list_record_names, _From, State) ->
 handle_call({forget_record_defs, ''}, _From, State) ->
   %% if user didn't specify a record name, delete all the entries from
   %% the record definition table.
-  edts_rte_records:delete_stored_records(),
+  ok   = edts_rte_records:delete_stored_records(),
   Msg  = make_record_return_message('all records', " are forgotten"),
   {reply, {ok, Msg}, State};
 handle_call({forget_record_defs, RecordName}, _From, State) ->
@@ -308,7 +308,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%_* Internal =================================================================
 %% @doc Read and store the record definitions from the specified module.
 update_record_definition(Module) ->
-  AddedRds  = edts_rte_records:read_and_add_records(Module),
+  AddedRds  = edts_rte_records:load_records(Module),
   Msg       = lists:flatten(
                 io_lib:format("Added record definitions:~p", [AddedRds])),
   edts_rte_app:debug(Msg),
@@ -374,7 +374,8 @@ replace_var_with_val(MFAInfo) ->
            , fun_form       = FunAbsForm
            , clause_structs = AllClausesLn} = MFAInfo,
   {_Mod, _Fun, _Arity, Depth} = Key,
-  FunStr0 = edts_rte_util:var_to_val_in_fun(FunAbsForm, AllClausesLn, Bindings),
+  FunStr0 = edts_rte_util:replace_value_in_fun( FunAbsForm, AllClausesLn
+                                              , Bindings),
   FunStr  = re:replace( FunStr0, "\n", "\n"++indent_str(Depth)
                       , [{return, list}, global]),
   indent_str(Depth) ++ FunStr.
@@ -436,8 +437,8 @@ update_mfa_info_tree( {Mod, Fun, Arity}, Depth, Line, Bindings
       %% assert that it can not be a tail call here. because
       %% the tail call scenario should be handled by the
       %% ancester of this element already.
-      false  = edts_rte_util:is_tail_call( MFAInfo#mfa_info.clause_structs
-                                         , MFAInfo#mfa_info.line, Line),
+      false  = edts_rte_util:is_tail_recursion( MFAInfo#mfa_info.clause_structs
+                                              , MFAInfo#mfa_info.line, Line),
 
       %% the interpreter steps forward within the same function, so
       %% just need to update the current mfa_info.
@@ -531,9 +532,9 @@ add_sibling_p(MFAInfo, NewKey, NewLine, NewDepth) ->
     true  ->
       %% this will rule out the case where we are stepping within
       %% the same function clause.
-      edts_rte_util:is_tail_call( MFAInfo#mfa_info.clause_structs
-                                , MFAInfo#mfa_info.line
-                                , NewLine);
+      edts_rte_util:is_tail_recursion( MFAInfo#mfa_info.clause_structs
+                                     , MFAInfo#mfa_info.line
+                                     , NewLine);
     false ->
       {_M, _F, _A, Depth} = MFAInfo#mfa_info.key,
       NewDepth =:= Depth
