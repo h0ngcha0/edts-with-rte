@@ -94,6 +94,7 @@ Example:
   ;; how to use that variable here and expand it inside the define-project-type
   ;; macro instead of hardcoding the regexps
   :relevant-files ("^\\.erlang$"
+                   "^\\.edts$"
                    "\\.app$"
                    "\\.app.src$"
                    "\\.config$"
@@ -111,21 +112,22 @@ Example:
 (defun edts-project-selector (file-name)
   "Try to figure out if FILE should be part of an edts-project."
   (edts-project-maybe-create file-name)
-  (let (prev-root
+  (let* (prev-root
         (cur-root (path-util-pop file-name))
-        bestroot)
+        (bestroot  (when (file-exists-p (path-util-join cur-root ".edts"))
+                     cur-root)))
     (while (and cur-root (not (string= prev-root cur-root)))
       (setq prev-root cur-root)
       (setq cur-root (path-util-pop cur-root))
       (when (file-exists-p (path-util-join cur-root ".edts"))
         (setq bestroot cur-root)))
-    (edts-log-debug "edts-project-selector result: %s" bestroot)
     bestroot))
 
 (define-project-type edts-otp (generic)
   (edts-project-otp-selector file)
   :config-file nil
   :relevant-files ("^\\.erlang$"
+                   "^\\.edts$"
                    "\\.app$"
                    "\\.app.src$"
                    "\\.config$"
@@ -144,7 +146,6 @@ Example:
   "Try to figure out if FILE should be part of an otp-project."
   (when (not (edts-project-selector file))
     (let ((res (edts-project-otp-selector-path file)))
-      (edts-log-debug "edts-project-otp selector result: %s" res)
       res)))
 
 (defun edts-project-otp-selector-path (file)
@@ -154,14 +155,18 @@ Example:
                                (string= (directory-file-name path) "/usr"))))
         (if (string-match "\\(.*\\)/lib/erlang[/]?$" path)
             ;; Match out lib/erlang part if we're in an install directory.
-            (match-string 1 path)
+            (let ((res (match-string 1 path)))
+              (edts-log-debug "edts-project-otp-selector result %s" res)
+              res)
           ;; Do nothing if we're in an otp-repository.
+          (edts-log-debug "edts-project-otp-selector result %s" path)
           path))))
 
 (define-project-type edts-temp (generic)
   (edts-project-temp-selector file)
   :config-file nil
   :relevant-files ("^\\.erlang$"
+                   "^\\.edts$"
                    "\\.app$"
                    "\\.app.src$"
                    "\\.config$"
@@ -185,12 +190,12 @@ Example:
                     (not (edts-project-otp-selector file))
                     (string-match "\\.[eh]rl$" file))
                (edts-project--temp-root file))))
-    (edts-log-debug "edts-project-temp-selector result: %s" res)
     res))
 
 
 (defun edts-project-init-buffer ()
   "Called each time a buffer inside a configured edts-project is opened."
+  (edts-log-debug "Project type is: %s" (eproject-type))
   (when (edts-project--run-init-p)
     (edts-log-debug "Initializing project for %s" (current-buffer))
     (edts-ensure-server-started)
@@ -228,23 +233,16 @@ Example:
 
 (defun edts-project-node-init ()
   (interactive)
-  (save-window-excursion
-    (with-output-to-temp-buffer "EDTS Project"
-      (edts-project--init-output-buffer)
-      ;; Ensure project node is started
-      (unless (edts-node-started-p (eproject-attribute :node-sname))
-        (edts-project--display "Starting project node for %s\n"
-                               (eproject-root))
-        (edts-project-start-node))
-      ;; Register it with the EDTS node
-      (edts-project--register-project-node)
-      (sleep-for 1))
-      (edts-project--kill-output-buffer)))
+  ;; Ensure project node is started
+  (unless (edts-node-started-p (eproject-attribute :node-sname))
+    (edts-project-start-node))
+  ;; Register it with the EDTS node
+  (edts-project--register-project-node))
 
 (defun edts-project-node-refresh ()
   "Asynchronously refresh the state of current buffer's project node"
   (interactive)
-  (edts-init-node-async
+  (edts-init-node
    (eproject-attribute :name)
    (eproject-attribute :node-sname)
    (eproject-root)
@@ -252,21 +250,9 @@ Example:
    (eproject-attribute :app-include-dirs)
    (eproject-attribute :project-include-dirs)))
 
-(defun edts-project--init-output-buffer ()
-  (with-current-buffer "EDTS Project"
-    (erase-buffer))
-  (display-buffer "EDTS Project")
-  (redisplay))
-
-(defun edts-project--kill-output-buffer ()
-  (kill-buffer "EDTS Project"))
-
-(defun edts-project--display (fmt &rest args)
-  (princ (format fmt args))
-  (redisplay))
-
 (defun edts-project-init-temp ()
   "Sets up values for a temporary project when visiting a non-project module."
+  (edts-log-debug "Project type is: %s" (eproject-type))
   (when (edts-project--run-init-p)
     (edts-ensure-server-started)
     (let* ((file (buffer-file-name))
@@ -287,6 +273,7 @@ Example:
 
 (defun edts-project-init-otp ()
   "Sets up values for a temporary project when visiting an otp-module."
+  (edts-log-debug "Project type is: %s" (eproject-type))
   (when (edts-project--run-init-p)
     (edts-ensure-server-started)
     (let* ((file (buffer-file-name))
@@ -315,7 +302,7 @@ Example:
 FILE."
   (let* ((dir        (path-util-dir-name file))
          (parent-dir (path-util-dir-name dir)))
-    (if (and (string-match "/src[/]?$" dir)
+    (if (and (string-match "/\\(src\\|test\\)[/]?$" dir)
              (file-exists-p (path-util-join parent-dir "ebin")))
         (file-name-as-directory parent-dir)
       (file-name-as-directory dir))))
@@ -345,19 +332,15 @@ FILE."
 (defun edts-project--register-project-node ()
   "Register the node of current buffer's project."
   (if (edts-node-registeredp (eproject-attribute :node-sname))
-      (edts-project--display "Re-initializing project node for %s. Please wait..."
-                             (eproject-root))
-    (edts-project--display "Initializing project node for %s. Please wait..."
-                           (eproject-root)))
-  (if (edts-init-node-when-ready
-       (eproject-attribute :name)
-       (eproject-attribute :node-sname)
-       (eproject-root)
-       (eproject-attribute :lib-dirs)
-       (eproject-attribute :app-include-dirs)
-       (eproject-attribute :project-include-dirs))
-      (edts-project--display "Done.")
-    (edts-project--display "Error.")))
+      (edts-log-info "Re-initializing node for project %s" (eproject-name))
+    (edts-log-info "Initializing node for project %s" (eproject-name)))
+  (edts-init-node-when-ready
+   (eproject-attribute :name)
+   (eproject-attribute :node-sname)
+   (eproject-root)
+   (eproject-attribute :lib-dirs)
+   (eproject-attribute :app-include-dirs)
+   (eproject-attribute :project-include-dirs)))
 
 (defun edts-project-build-exec-path ()
   "Build up the exec-path to use when starting the project-node of PROJECT."
@@ -513,24 +496,26 @@ auto-save data."
    edts-project-suite
    ;; Setup
    (lambda ()
-     (edts-test-cleanup-all-buffers)
+     (setq edts-event-inhibit t)
+     (edts-test-pre-cleanup-all-buffers)
      (edts-test-setup-project edts-test-project1-directory
                               "test"
                               nil))
    ;; Teardown
    (lambda (setup-config)
+     (setq edts-event-inhibit nil)
+     (edts-test-post-cleanup-all-buffers)
      (edts-test-teardown-project edts-test-project1-directory)))
 
 
   (edts-test-case edts-project-suite edts-project-basic-test ()
     "Basic project setup test"
-    (let ((eproject-prefer-subproject t))
-      (find-file (car (edts-test-project1-modules)))
-      (should (file-exists-p
-               (path-util-join edts-test-project1-directory ".edts")))
-      (should (string= "test" (eproject-name)))
-      (should (get-buffer"*edts*"))
-      (should (get-buffer"*test*"))))
+    (find-file (car (edts-test-project1-modules)))
+    (should (file-exists-p
+             (path-util-join edts-test-project1-directory ".edts")))
+    (should (string= "test" (eproject-name)))
+    (should (get-buffer"*edts*"))
+    (should (get-buffer"*test*")))
 
   (edts-test-case edts-project-suite edts-project-selector-test ()
     "Test that the in the case of multiple levels of projects, the super

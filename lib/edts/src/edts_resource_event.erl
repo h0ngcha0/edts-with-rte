@@ -23,7 +23,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%_* Module declaration =======================================================
--module(edts_resource_nodes).
+-module(edts_resource_event).
 
 %%%_* Exports ==================================================================
 
@@ -60,9 +60,16 @@ content_types_provided(ReqData, Ctx) ->
 
 %% Handlers
 to_json(ReqData, Ctx) ->
-  {ok, Names0} = edts:nodes(),
-  Names = lists:map(fun edts_util:nodename2shortname/1, Names0),
-  {mochijson2:encode([{nodes, Names}]), ReqData, Ctx}.
+  try
+    {ok, Event} = edts_event:listen(),
+    {mochijson2:encode([{event, Event}]), ReqData, Ctx}
+  catch
+    C:E ->
+      edts_log:error("Event Listener failed with ~p:~p~nStacktrace:~n~p",
+                     [C,E, erlang:get_stacktrace()]),
+      to_json(ReqData, Ctx)
+  end.
+
 
 %%%_* Internal functions =======================================================
 

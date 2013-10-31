@@ -145,6 +145,10 @@ interactively to set up your man-pages instead")
       (goto-char 0)
       (while (re-search-forward re nil t)
         (push (match-string 2) funs))
+      ;; Hack so we don't choke on type specs in the documentation function
+      ;; heads.
+      (setq funs (mapcar #'(lambda (s) (replace-regexp-in-string "::" "=" s))
+                         funs))
       (sort
        ;; each mfa is '(mod fun arity), but we don't want the module part
        (mapcar #'(lambda (mfa) (format "%s/%s"  (cadr mfa) (caddr mfa)))
@@ -160,22 +164,24 @@ interactively to set up your man-pages instead")
     ;; going until end-of-buffer. It also always checks for the presence
     ;; of .TH and .SH tags at the beginning of the buffer (even if this
     ;; is outside the scope of the current region to decode). To
-    ;; circumvent this, we start by deleting everything after the
-    ;; section of interest, then decode that section ('til
-    ;; end-of-buffer) and finally we delete everything before the
-    ;; section of interest.
-    (let ((end (point-max))
+    ;; circumvent this, we delete everything before and after the
+    ;; section of interest, and then add those tags at the top. This
+    ;; produces two empty lines at the top that we delete before returning.
+    (let (start
+          end
           (re  (format "^\\.B\n\\(%s:\\)?%s" module function)))
       (re-search-forward re)
-      (while (re-search-forward re nil t) nil)
+      (setq start (match-beginning 0))
+      (while (re-search-forward re nil t) nil) ; Get the docs for all arities.
       (when
           (re-search-forward "^\\.\\(\\(B\n\\)\\|\\(SH[[:space:]]\\)\\)" nil 't)
-        (setq end (match-beginning 0)))
-      (delete-region end (point-max))
+        (delete-region (match-beginning 0) (point-max)))
+      (delete-region (point-min) start)
+      (goto-char (point-min))
+      (insert ".TH\n.SH\n")
       (woman-decode-region (point-min) (point-max))
       (goto-char (point-min))
-      (re-search-forward (format "^\\s-*%s" function))
-      (delete-region (point-min) (match-beginning 0))
+      (kill-line 2)
       (set-left-margin (point-min) (point-max) 0)
       (delete-to-left-margin (point-min) (point-max))
       (buffer-string))))
@@ -186,7 +192,7 @@ interactively to set up your man-pages instead")
   (edts-man-find-module module)
   (let (foundp
         (re (format "^\\s-*\\(\\(%s:\\)?%s\\)(.*)\\s-->" module function)))
-    (while (and (not foundp) (re-search-forward re))
+    (while (and (not foundp) (re-search-forward re nil t))
       (save-excursion
         (goto-char (match-beginning 1))
         (let ((matchp (equal (list function arity)
