@@ -176,9 +176,8 @@ init([]) ->
   edts_rte_records:init_backend(),
   {ok, #rte_state{}}.
 
-handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
+handle_call({rte_run, Module, Fun, Args}, _From, State) ->
   {ok, _M} = update_record_definition(Module),
-  Args     = binary_to_list(Args0),
   ArgsTerm = edts_rte_util:convert_list_to_term(Args),
   Arity    = length(ArgsTerm),
 
