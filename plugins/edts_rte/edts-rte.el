@@ -1,4 +1,3 @@
-;; rte related commands start
 (require 'edts-rte-mode)
 
 (defun edts-rte-run ()
