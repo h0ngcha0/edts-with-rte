@@ -26,43 +26,48 @@
 -behaviour(edts_plugin).
 
 %%%_* Exports =================================================================
--export([ forget_record_defs/2
-        , interpret_module/2
-        , list_record_names/1
-        , rte_run/4
-        , uninterpret_module/2
-        , update_record_defs/2
+-export([ forget_record_defs/1
+        , interpret_module/1
+        , list_record_names/0
+        , rte_run/3
+        , uninterpret_module/1
+        , update_record_defs/1
         ]).
 
 %% Behaviour exports
 -export([edts_server_services/0,
+         event_formatters/0,
          project_node_modules/0,
-         project_node_services/0]).
+         project_node_services/0,
+         spec/2]).
 
 %%%_* Defines ==================================================================
 %%%_* API ======================================================================
-rte_run(Node, Module, Func, Args) ->
-  dist_call(Node, edts_rte_server, rte_run, [Module, Func, Args]).
+rte_run(Module, Func, Args) ->
+  edts_rte_app:debug("rte_run args: ~p~n", [Args]),
+  edts_rte_server:rte_run(Module, Func, Args).
 
-interpret_module(Node, Module) ->
-  dist_call(Node, edts_rte_int_listener, interpret_module, [Module]).
+interpret_module(Module) ->
+  edts_rte_int_listener:interpret_module(Module).
 
-uninterpret_module(Node, Module) ->
-  dist_call(Node, edts_rte_int_listener, uninterpret_module, [Module]).
+uninterpret_module(Module) ->
+  edts_rte_int_listener:uninterpret_module(Module).
 
-list_record_names(Node) ->
-  dist_call(Node, edts_rte_server, list_record_names, []).
+list_record_names() ->
+  edts_rte_server:list_record_names().
 
-update_record_defs(Node, Module) ->
-  dist_call(Node, edts_rte_server, update_record_defs, [Module]).
+update_record_defs(Module) ->
+  edts_rte_server:update_record_defs(Module).
 
-forget_record_defs(Node, RecordName) ->
-  dist_call(Node, edts_rte_server, forget_record_defs, [RecordName]).
+forget_record_defs(RecordName) ->
+  edts_rte_server:forget_record_defs(RecordName).
 
 %% Behaviour callbacks
 edts_server_services()  -> [].
+event_formatters()      -> [].
 project_node_modules()  ->
-  [ edts_rte_app
+  [ edts_rte
+  , edts_rte_app
   , edts_rte_util
   , edts_rte_int_listener
   , edts_rte_records
@@ -71,16 +76,17 @@ project_node_modules()  ->
   ].
 project_node_services() -> [edts_rte_app].
 
-%%%_* Internal =================================================================
-dist_call(Node, Module, Func, Args) ->
-  try edts_dist:call(Node, Module, Func, Args)
-  catch
-    error:Err ->
-      edts_log:error("Error in remote call ~p:~p/~p on ~p: ~p",
-                     [Module, Func, length(Args), Node, Err]),
-      {error, lists:flatten(io_lib:format("~p", [Err]))}
-  end.
+spec(interpret_module,      1) -> [ {module,    atom}];
+spec(uninterpret_module,    1) -> [ {module,    atom}];
+spec(list_record_names,     0) -> [];
+spec(update_record_defs,    1) -> [ {module,    atom}];
+spec(forget_record_defs,    1) -> [ {record,    atom}];
+spec(rte_run,               3) -> [ {module,    atom}
+                                  , {function,  atom}
+                                  , {args,      string}
+                                  ].
 
+%%%_* Internal =================================================================
 %%%_* Unit tests ===============================================================
 
 %%%_* Emacs ====================================================================

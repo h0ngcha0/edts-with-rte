@@ -176,9 +176,8 @@ init([]) ->
   edts_rte_records:init_backend(),
   {ok, #rte_state{}}.
 
-handle_call({rte_run, Module, Fun, Args0}, _From, State) ->
+handle_call({rte_run, Module, Fun, Args}, _From, State) ->
   {ok, _M} = update_record_definition(Module),
-  Args     = binary_to_list(Args0),
   ArgsTerm = edts_rte_util:convert_list_to_term(Args),
   Arity    = length(ArgsTerm),
 
@@ -216,14 +215,12 @@ handle_call({forget_record_defs, ''}, _From, State) ->
   %% if user didn't specify a record name, delete all the entries from
   %% the record definition table.
   ok   = edts_rte_records:delete_stored_records(),
-  Msg  = make_record_return_message('all records', " are forgotten"),
-  {reply, {ok, Msg}, State};
+  edts_rte_app:debug("all records are forgotten"),
+  {reply, {ok, ok}, State};
 handle_call({forget_record_defs, RecordName}, _From, State) ->
   Reply = case edts_rte_records:delete_stored_record(RecordName) of
-            not_found ->
-              {error, make_record_return_message(RecordName, " is not stored")};
-            ok ->
-              {ok, make_record_return_message(RecordName, " is forgotten")}
+            not_found -> {error, no_such_record};
+            ok        -> {ok, ok}
           end,
   {reply, Reply, State}.
 
@@ -310,15 +307,16 @@ code_change(_OldVsn, State, _Extra) ->
 update_record_definition(Module) ->
   AddedRds  = edts_rte_records:load_records(Module),
   Msg       = lists:flatten(
-                io_lib:format("Added record definitions:~p", [AddedRds])),
+                io_lib:format("Added record definitions:~p~n", [AddedRds])),
   edts_rte_app:debug(Msg),
-  {ok, Msg}.
+  {ok, AddedRds}.
 
 %% @doc Read the names of all the record stored in RTE
 list_stored_record_names() ->
   Records = edts_rte_records:get_stored_records(),
-  Reply   = lists:flatten(io_lib:format("All saved records:~p", [Records])),
-  {ok, Reply}.
+  Msg     = lists:flatten(io_lib:format("All saved records:~p", [Records])),
+  edts_rte_app:debug(Msg),
+  {ok, Records}.
 
 %% @doc interpret the current module
 interpret_current_module(Module) ->
@@ -356,10 +354,6 @@ lift(F) ->
     {error, Rsn} -> {error, Rsn};
     Rsn          -> {ok, Rsn}
   end.
-
-%% @doc Make a return message for record related APIs
-make_record_return_message(RecordName, Msg) ->
-  string:concat(atom_to_list(RecordName), Msg).
 
 %%------------------------------------------------------------------------------
 %% @doc Send the rte result to the rte server.

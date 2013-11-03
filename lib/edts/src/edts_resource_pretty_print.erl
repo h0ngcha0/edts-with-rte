@@ -1,5 +1,5 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% @doc function callers resource
+%%% @doc nodes resource
 %%% @end
 %%% @author Thomas Järvstrand <tjarvstrand@gmail.com>
 %%% @copyright
@@ -23,20 +23,19 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%_* Module declaration =======================================================
--module(edts_resource_function_callers).
+-module(edts_resource_pretty_print).
 
 %%%_* Exports ==================================================================
 
 %% API
 %% Webmachine callbacks
--export([ allowed_methods/2
-        , content_types_provided/2
-        , init/1
-        , malformed_request/2
-        , resource_exists/2]).
+-export([ allowed_methods/2,
+          content_types_provided/2,
+          malformed_request/2,
+          init/1]).
 
 %% Handlers
--export([to_json/2]).
+-export([ to_json/2]).
 
 %%%_* Includes =================================================================
 -include_lib("webmachine/include/webmachine.hrl").
@@ -49,7 +48,7 @@
 %% Webmachine callbacks
 init(_Config) ->
   edts_log:debug("Call to ~p", [?MODULE]),
-  {ok, orddict:new()}.
+  {ok, []}.
 
 allowed_methods(ReqData, Ctx) ->
   {['GET'], ReqData, Ctx}.
@@ -61,21 +60,33 @@ content_types_provided(ReqData, Ctx) ->
   {Map, ReqData, Ctx}.
 
 malformed_request(ReqData, Ctx) ->
-  edts_resource_lib:validate(ReqData, Ctx, [nodename, module, function, arity]).
+  try
+    Str    = wrq:get_qs_value("string", ReqData),
+    {ok, AbsTerm, _} = erl_scan:string(Str ++ "."),
+    {ok, Term} = erl_parse:parse_term(AbsTerm),
 
-resource_exists(ReqData, Ctx) ->
-  MFArgKeys = {edts_code, who_calls, [module, function, arity]},
-  edts_resource_lib:check_exists_and_do_rpc(ReqData, Ctx, [], MFArgKeys).
+    Indent = list_to_integer(wrq:get_qs_value("indent", ReqData)),
+    MaxCol = list_to_integer(wrq:get_qs_value("max_column", ReqData)),
+
+    RecF = fun(_A, _N) -> no end,
+    PPString =
+      lists:flatten(io_lib_pretty:print(Term, Indent, MaxCol, -1, -1, RecF)),
+    {false, ReqData, orddict:store(return, PPString, Ctx)}
+  catch
+    _:_ -> {true, ReqData, Ctx}
+  end.
 
 %% Handlers
 to_json(ReqData, Ctx) ->
-  Info0 = orddict:fetch(result, Ctx),
-  Data = {array, [{struct, [{module, M}, {function, F}, {arity, A}]} ||
-                             {M, F, A} <- Info0]},
-  {mochijson2:encode(Data), ReqData, Ctx}.
+  case orddict:find(return, Ctx) of
+    false     -> {[], ReqData, Ctx};
+    {ok, Ret} ->
+      Bin = list_to_binary(Ret),
+      {mochijson2:encode([{return, Bin}]), ReqData, Ctx}
+  end.
+
 
 %%%_* Internal functions =======================================================
-
 
 %%%_* Emacs ============================================================
 %%% Local Variables:

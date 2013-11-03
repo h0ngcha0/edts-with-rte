@@ -33,28 +33,64 @@
   :group 'edts
   :type 'boolean)
 
+;; define-fringe-bitmap is not defined when built without GUI, only call
+;; if available
+(when (fboundp 'define-fringe-bitmap)
+  (define-fringe-bitmap 'small-blip (vector #b00000000
+                                            #b00011100
+                                            #b00111110
+                                            #b00111110
+                                            #b00111110
+                                            #b00011100
+                                            #b00000000)))
+
+(defconst edts-face-warning-color-light "#ffc000")
+(defconst edts-face-warning-color-dark "#ffc000")
+(defconst edts-face-error-color-light "#ff0000")
+(defconst edts-face-error-color-dark "#ff0000")
+(defconst edts-face-passed-test-color-light "#95e454")
+(defconst edts-face-passed-test-color-dark "#95e454")
+
+(defface edts-face-error-fringe-bitmap
+  `((((class color) (background dark))  (:foreground ,edts-face-error-color-dark))
+    (((class color) (background light)) (:foreground ,edts-face-error-color-light))
+    (t (:bold t)))
+  "Face used for marking error lines."
+  :group 'edts)
+
+(defface edts-face-warning-fringe-bitmap
+  `((((class color) (background dark))  (:foreground ,edts-face-warning-color-dark))
+    (((class color) (background light)) (:foreground ,edts-face-warning-color-light))
+    (t (:bold t)))
+  "Face used for marking error lines."
+  :group 'edts)
+
 (defface edts-face-error-line
-  '((((class color) (background dark)) (:background "Firebrick"))
-    (((class color) (background light)) (:background "LightPink1"))
+  `((((class color) (background dark))  (:underline (:color ,edts-face-error-color-dark)))
+    (((class color) (background light)) (:underline (:color ,edts-face-error-color-light)))
     (t (:bold t)))
   "Face used for marking error lines."
   :group 'edts)
 
 (defface edts-face-warning-line
-  '((((class color) (background dark)) (:background "yellow4"))
-    (((class color) (background light)) (:background "#ffff80"))
+  `((((class color) (background dark))  (:underline (:color ,edts-face-warning-color-dark)))
+    (((class color) (background light)) (:underline (:color ,edts-face-warning-color-light)))
     (t (:bold t)))
   "Face used for marking warning lines."
   :group 'edts)
 
 (defface edts-face-error-mode-line
-  '((default (:foreground "white" :inherit edts-face-error-line)))
-  "The face to use for the modeline when there are errors in the buffer"
+  `((((class color))  (:background ,edts-face-error-color-dark
+                       :foreground "white"))
+    (t (:bold t)))
+  "Face used for marking errors in the mode-line."
   :group 'edts)
 
 (defface edts-face-warning-mode-line
-  '((default (:foreground "white" :inherit edts-face-warning-line)))
-  "The face to use for the modeline when there are warnings in the buffer"
+  `((((class color))  (:background ,edts-face-warning-color-dark
+                       :foreground "black"))
+    (t (:bold t)))
+  "Face used for marking warnings in the mode-line."
   :group 'edts)
 
 (defvar edts-face-modeline-remap-cookie nil
@@ -63,19 +99,15 @@ that we can reset our face remappings.")
 (make-variable-buffer-local 'edts-face-modeline-remap-cookie)
 
 (defface edts-face-passed-test-line
-  '((((class color) (background dark))  (:background "dark olive green"
-                                         :foreground "white"))
-    (((class color) (background light)) (:background "pale green"
-                                         :foreground "black"))
+  `((((class color) (background dark))  (:underline (:color ,edts-face-passed-test-color-dark)))
+    (((class color) (background light)) (:underline (:color ,edts-face-passed-test-color-light)))
     (t (:bold t)))
   "Face used for marking passed test lines."
   :group 'edts)
 
 (defface edts-face-failed-test-line
-  '((((class color) (background dark))  (:background "Firebrick"
-                                         :foreground "white"))
-    (((class color) (background light)) (:background "LightPink1"
-                                         :foreground "black"))
+  `((((class color) (background dark))  (:underline (:color ,edts-face-error-color-dark)))
+    (((class color) (background light)) (:underline (:color ,edts-face-error-color-light)))
     (t (:bold t)))
   "Face used for marking failed test lines."
   :group 'edts)
@@ -140,7 +172,14 @@ the highest priority any edts overlay at new point if any."
       overlay1
       overlay2))
 
-(defun edts-face-display-overlay (face line desc type prio &optional fill-line)
+(defun edts-face-display-overlay (face
+                                  line
+                                  desc
+                                  type
+                                  prio
+                                  &optional
+                                  fill-line
+                                  fringe)
   "Displays overlay for ISSUE in current buffer."
   (save-excursion
     (save-restriction
@@ -155,15 +194,19 @@ the highest priority any edts overlay at new point if any."
         (overlay-put overlay 'help-echo desc)
         (overlay-put overlay 'edts-face-overlay-type type)
         (overlay-put overlay 'priority prio)
+        (when (and (not edts-inhibit-fringe-markers) fringe)
+          (overlay-put overlay
+                       'before-string
+                       (propertize " " 'display (cons edts-marker-fringe fringe))))
         overlay))))
 
-(defun edts-face-remove-overlays (&optional type)
-  "Removes all overlays with the name TYPE"
+(defun edts-face-remove-overlays (&optional types)
+  "Removes all overlays with of a type that is in TYPES."
   (interactive)
   (save-restriction
     (widen)
     (dolist (ol (overlays-in (point-min) (point-max)))
-      (when (edts-face-overlay-p ol type)
+      (when (edts-face-overlay-p ol types)
         (delete-overlay ol)))))
 
 (defun edts-face-next-overlay (pos types)
@@ -222,3 +265,5 @@ is non-nil."
   (when edts-face-modeline-remap-cookie
     (face-remap-remove-relative edts-face-modeline-remap-cookie)
     (setq edts-face-modeline-remap-cookie nil)))
+
+(provide 'edts-face)

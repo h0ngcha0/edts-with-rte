@@ -29,6 +29,13 @@
 (require 'eproject-extras)
 (require 'path-util)
 
+(require 'edts-face)
+
+(defvar edts-code-issue-types '(edts-code-compile
+                                edts-code-dialyzer
+                                edts-code-eunit-failed)
+  "List of overlay categories that are considered edts-code-issues")
+
 (defvar edts-code-before-compile-hook
   nil
   "Hooks to run before compilation. Hooks are called with the name of
@@ -36,7 +43,6 @@ the module to be compiled as the only argument.")
 
 (defvar edts-code-after-compile-hook
   '(edts-code-eunit
-    edts-code-xref-analyze-related
     edts-code-dialyze-related-hook-fun)
   "Hooks to run after compilation finishes. Hooks are called with the
 compilation result as a symbol as the only argument")
@@ -44,11 +50,6 @@ compilation result as a symbol as the only argument")
   'edts-code-after-compilation-hook
   'edts-code-after-compile-hook
   "This variable is deprecated, use `edts-code-after-compile-hook'")
-
-(defcustom edts-code-xref-checks '(undefined_function_calls)
-  "What xref checks EDTS should perform. A list of 0 or more of
-undefined_function_calls, unexported_functions"
-  :group 'edts)
 
 (defvar edts-code-buffer-issues nil
   "A plist describing the current issues (errors and warnings) in the
@@ -68,6 +69,14 @@ issue severity (error, warning, etc).")
     (warning     . 902)
     (error       . 903))
   "The overlay priorities for compilation errors and warnings")
+
+(defconst edts-code-issue-fringe-bitmap
+  (when (boundp 'fringe-bitmaps)
+    (if (member 'small-blip fringe-bitmaps)
+        'small-blip
+      'filled-square))
+  "The bitmap to display in the fringe to indicade an issue on that
+line.")
 
 (defun edts-code-overlay-priority (type)
   "Returns the overlay priority of TYPE. Type can be either a string or
@@ -98,7 +107,7 @@ with severity as key and a lists of issues as values"
 (defun edts-code-compile-and-display ()
   "Compiles current buffer on node related the that buffer's project."
   (interactive)
-  (edts-face-remove-overlays '("edts-code-compile"))
+  (edts-face-remove-overlays '(edts-code-compile))
   (let ((module   (ferl-get-module))
         (file     (buffer-file-name)))
     (when module
@@ -113,61 +122,11 @@ with severity as key and a lists of issues as values"
           (warnings (cdr (assoc 'warnings comp-res))))
       (edts-code--set-issues 'edts-code-compile (list 'error   errors
                                                       'warning warnings))
-      (edts-code-display-error-overlays "edts-code-compile" errors)
-      (edts-code-display-warning-overlays "edts-code-compile" warnings)
+      (edts-code-display-error-overlays 'edts-code-compile errors)
+      (edts-code-display-warning-overlays 'edts-code-compile warnings)
       (edts-face-update-buffer-mode-line (edts-code-buffer-status))
       (run-hook-with-args 'edts-code-after-compile-hook (intern result))
       result)))
-
-(defun edts-code-xref-analyze-related (&optional result)
-  "Runs xref-checks for all live buffers related to current
-buffer either by belonging to the same project or, if current buffer
-does not belong to any project, being in the same directory as the
-current buffer's file."
-  (when (and edts-code-xref-checks (not (eq result 'error)))
-    (interactive '(ok))
-    (let* ((mods nil))
-      (with-each-buffer-in-project (gen-sym) (eproject-root)
-        (let ((mod (ferl-get-module)))
-          (when mod
-            (edts-face-remove-overlays '("edts-code-xref"))
-            (push mod mods))))
-      (edts-get-module-xref-analysis-async
-       mods
-       edts-code-xref-checks
-       #'edts-code-handle-xref-analysis-result))))
-
-
-(defun edts-code-xref-analyze-no-project ()
-  "Runs xref-checks for all live buffers with its file in current
-buffer's directory, on the node related to that buffer."
-  (mapc
-   #'(lambda (buf) (with-current-buffer buf (edts-code-xref-analyze))))
-  (edts-code--modules-in-dir default-directory))
-
-
-(defun edts-code-xref-analyze ()
-  "Runs xref-checks for current buffer on the node related to that
-buffer's project."
-  (interactive)
-  (let ((module (ferl-get-module)))
-    (when module
-      (edts-face-remove-overlays '("edts-code-xref"))
-      (edts-get-module-xref-analysis-async
-       (list module) edts-code-xref-checks
-       #'edts-code-handle-xref-analysis-result))))
-
-(defun edts-code-handle-xref-analysis-result (analysis-res)
-  (when analysis-res
-    (let* ((all-errors (cdr (assoc 'errors analysis-res)))
-           (err-alist  (edts-code--issue-to-file-map all-errors)))
-      ;; Set the error list in each project-buffer
-      (with-each-buffer-in-project (gen-sym) (eproject-root)
-        (let ((errors (cdr (assoc (buffer-file-name) err-alist))))
-          (edts-code--set-issues 'edts-code-xref (list 'error errors))
-          (edts-face-update-buffer-mode-line (edts-code-buffer-status))
-          (when errors
-            (edts-code-display-error-overlays "edts-code-xref" errors)))))))
 
 (defun edts-code--issue-to-file-map (issues)
   "Creates an alist with mapping between filenames and related elements
@@ -175,7 +134,7 @@ of ISSUES."
   (let* ((issue-alist nil))
     (mapc
      #'(lambda (e)
-         (let* ((file (cdr (assoc 'file e)))
+         (let* ((file (file-truename (cdr (assoc 'file e))))
                 (new-e (cons e (cdr (assoc file issue-alist)))))
            (push (cons file new-e) issue-alist)))
      issues)
@@ -187,8 +146,8 @@ buffer's project."
   (interactive '(ok))
   (let ((module (ferl-get-module)))
     (when module
-      (edts-face-remove-overlays '("edts-code-eunit-passed"))
-      (edts-face-remove-overlays '("edts-code-eunit-failed"))
+      (edts-face-remove-overlays '(edts-code-eunit-passed))
+      (edts-face-remove-overlays '(edts-code-eunit-failed))
       (when (not (eq result 'error))
 	(edts-get-module-eunit-async
 	 module #'edts-code-handle-eunit-result)))))
@@ -199,9 +158,9 @@ buffer's project."
           (passed (cdr (assoc 'passed eunit-res))))
       (edts-code--set-issues 'edts-code-eunit (list 'error failed))
       (edts-code-display-passed-test-overlays
-       "edts-code-eunit-passed" passed)
+       'edts-code-eunit-passed passed)
       (edts-code-display-failed-test-overlays
-       "edts-code-eunit-failed" failed)
+       'edts-code-eunit-failed failed)
       (edts-face-update-buffer-mode-line (edts-code-buffer-status)))))
 
 (defun edts-code-dialyze-related-hook-fun (result)
@@ -215,7 +174,7 @@ buffer either by belonging to the same project or, if current buffer
 does not belongi to any project, being in the same directory as the
 current buffer's file."
   (interactive)
-  (edts-face-remove-overlays '("edts-code-dialyzer"))
+  (edts-face-remove-overlays '(edts-code-dialyzer))
   (if eproject-mode
       (edts-code-dialyze-project)
     (edts-code-dialyze-no-project)))
@@ -264,44 +223,55 @@ non-recursive."
       ;; Set the warning list in each project-buffer
       (with-each-buffer-in-project (gen-sym) (eproject-root)
         (let ((warnings (cdr (assoc (buffer-file-name) warn-alist))))
-          (edts-code--set-issues 'edts-code-xref (list 'warning warnings))
+          (edts-code--set-issues 'edts-code-dialyzer (list 'warning warnings))
           (edts-face-update-buffer-mode-line (edts-code-buffer-status))
           (when warnings
-            (edts-code-display-warning-overlays "edts-code-xref" warnings)))))))
+            (edts-code-display-warning-overlays 'edts-code-dialyzer
+                                                warnings)))))))
 
 
 (defun edts-code-display-error-overlays (type errors)
   "Displays overlays for ERRORS in current buffer."
   (mapcar
    #'(lambda (error)
-       (edts-code-display-issue-overlay type 'edts-face-error-line error))
+       (edts-code-display-issue-overlay type
+                                        'edts-face-error-line
+                                        'edts-face-error-fringe-bitmap
+                                        error))
    errors))
 
 (defun edts-code-display-warning-overlays (type warnings)
   "Displays overlays for WARNINGS in current buffer."
   (mapcar
    #'(lambda (warning)
-       (edts-code-display-issue-overlay type 'edts-face-warning-line warning))
+       (edts-code-display-issue-overlay type
+                                        'edts-face-warning-line
+                                        'edts-face-warning-fringe-bitmap
+                                        warning))
    warnings))
 
 (defun edts-code-display-failed-test-overlays (type failed-tests)
   "Displays overlays for FAILED TESTS in current buffer."
   (mapcar
    #'(lambda (failed-test)
-       (edts-code-display-issue-overlay
-        type 'edts-face-failed-test-line failed-test))
+       (edts-code-display-issue-overlay type
+                                        'edts-face-failed-test-line
+                                        'edts-face-error-fringe-bitmap
+                                        failed-test))
    failed-tests))
 
 (defun edts-code-display-passed-test-overlays (type passed-tests)
   "Displays overlays for PASSED TESTS in current buffer."
   (mapcar
    #'(lambda (passed-test)
-       (edts-code-display-issue-overlay
-        type 'edts-face-passed-test-line passed-test))
+       (edts-code-display-issue-overlay type
+                                        'edts-face-passed-test-line
+                                        nil
+                                        passed-test))
    passed-tests))
 
 
-(defun edts-code-display-issue-overlay (type face issue)
+(defun edts-code-display-issue-overlay (type face fringe-face issue)
   "Displays overlay with FACE for ISSUE in current buffer."
   (let* ((line         (edts-code-find-issue-overlay-line issue))
          (issue-type   (cdr (assoc 'type issue)))
@@ -309,9 +279,16 @@ non-recursive."
          (help         (format "line %s, %s: %s" line issue-type desc))
          (overlay-type type)
          (prio         (edts-code-overlay-priority
-                        (cdr (assoc 'type issue)))))
+                        (cdr (assoc 'type issue))))
+         (fringe       (list edts-code-issue-fringe-bitmap fringe-face)))
     (when (integerp line)
-      (edts-face-display-overlay face line help overlay-type prio))))
+      (edts-face-display-overlay face
+                                 line
+                                 help
+                                 overlay-type
+                                 prio
+                                 nil
+                                 fringe))))
 
 (defun edts-code-find-issue-overlay-line (issue)
   "Tries to find where in current buffer to display overlay for `ISSUE'."
@@ -332,10 +309,7 @@ non-recursive."
   "Moves point to the next error in current buffer and prints the error."
   (interactive)
   (push-mark)
-  (let* ((overlay (edts-face-next-overlay (point) '("edts-code-compile"
-                                                    "edts-code-dialyzer"
-                                                    "edts-code-xref"
-                                                    "edts-code-eunit-failed"))))
+  (let* ((overlay (edts-face-next-overlay (point) edts-code-issue-types)))
     (if overlay
         (progn
           (goto-char (overlay-start overlay))
@@ -346,11 +320,7 @@ non-recursive."
   "Moves point to the next error in current buffer and prints the error."
   (interactive)
   (push-mark)
-  (let* ((overlay (edts-face-previous-overlay (point)
-                                              '("edts-code-compile"
-                                                "edts-code-dialyzer"
-                                                "edts-code-xref"
-                                                "edts-code-eunit-failed"))))
+  (let* ((overlay (edts-face-previous-overlay (point) edts-code-issue-types)))
     (if overlay
         (progn
           (goto-char (overlay-start overlay))
