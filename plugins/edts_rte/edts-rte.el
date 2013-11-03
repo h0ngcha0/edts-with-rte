@@ -57,8 +57,7 @@
          (args   (list (cons "module" module)))
          (result (edts-plugin-call node 'edts_rte 'update_record_defs args)))
     (edts-rte-log-info "Update the record definitions: %s" module)
-    (null (edts-rte-log-info
-           "%s" (cdr (assoc 'message (cdr (assoc 'body result))))))))
+    (null (edts-rte-log-info "%s" result))))
 
 (defun edts-rte-forget-record-defs (record-name &optional node module)
   "Make RTE forget a particular record definition, if not specified
@@ -71,24 +70,20 @@ then forget all"
     (if (eq "" record-name)
         (edts-rte-log-info "Forget the record definitions of %s" record-name)
       (edts-rte-log-info "Forget all the record definitions"))
-    (null (edts-rte-log-info
-           "%s" (cdr (assoc 'message (cdr (assoc 'body result))))))))
+    (null (edts-rte-log-info "%s" result))))
 
 (defun edts-rte-list-stored-record-names (&optional node)
   "List the name of all the record that are stored by RTE"
   (interactive)
   (let* ((node   (or node (edts-node-name)))
-         (result (edts-plugin-call node 'edts_rte 'list_record_names nil))
-         )
+         (result (edts-plugin-call node 'edts_rte 'list_record_names nil)))
     (edts-rte-log-info "List all the record definitions...")
-    (null (edts-rte-log-info
-           "%s" (cdr (assoc 'message (cdr (assoc 'body result))))))))
+    (null (edts-rte-log-info "%s" result))))
 
 (defun param-buffer ()
   "Return the name of the parameter buffer for the current node"
   (let* ((node (edts-buffer-node-name)))
-    (concat "*" node "-" "params" "*")
-    ))
+    (concat "*" node "-" "params" "*")))
 
 (defun ensure-args-saved (args)
   "Ensure that the module function and arguments are saved in
@@ -126,7 +121,7 @@ then forget all"
 (defun trim-string (string)
   "Remove white spaces in beginning and ending of STRING.
 White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
-(replace-regexp-in-string "\\`[ \t\n]*" "" (replace-regexp-in-string "[ \t\n]*\\'" "" string)))
+  (replace-regexp-in-string "\\`[ \t\n]*" "" (replace-regexp-in-string "[ \t\n]*\\'" "" string)))
 
 
 ;; find the mfa of the point
@@ -149,12 +144,8 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
       (erlang-mode)
       (edts-rte-mode))))
 
-(defun edts-rte-log-error (msg &rest args)
-  "Log MSG at error-level."
-  (apply #'edts-log-error (concat "RTE " msg) args))
-
 (defun edts-rte-log-info (msg &rest args)
   "Log MSG at info-level."
-  (apply #'edts-log-info (concat "RTE " msg) args))
+  (apply #'edts-log-info (concat "RTE: " msg) args))
 
 (provide 'edts-rte)

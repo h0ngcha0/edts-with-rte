@@ -44,7 +44,7 @@
 %%%_* Defines ==================================================================
 %%%_* API ======================================================================
 rte_run(Module, Func, Args) ->
-  io:format("rte_run args: ~p~n", [Args]),
+  edts_rte_app:debug("rte_run args: ~p~n", [Args]),
   edts_rte_server:rte_run(Module, Func, Args).
 
 interpret_module(Module) ->
