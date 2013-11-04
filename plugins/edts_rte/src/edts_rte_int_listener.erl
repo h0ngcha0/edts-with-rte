@@ -27,8 +27,7 @@
 %% server API
 -export([start/0, stop/0, start_link/0]).
 
--export([ is_module_interpreted/1
-        , maybe_attach/1
+-export([ maybe_attach/1
         , step/0
         ]).
 
@@ -75,15 +74,6 @@ maybe_attach(Pid) ->
     {error, already_attached, AttPid} ->
       {already_attached, AttPid, Pid}
   end.
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Reports if Module is interpreted.
-%% @end
--spec is_module_interpreted(Module :: module()) -> boolean().
-%%------------------------------------------------------------------------------
-is_module_interpreted(Module) ->
-  gen_server:call(?SERVER, {is_interpreted, Module}).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -142,9 +132,6 @@ handle_call( {attach, Pid}, _From
            , #listener_state{listener = Listener, proc = Pid} = State) ->
   edts_rte_app:debug("in hancle_call, already attach, Pid:~p~n", [Pid]),
   {reply, {error, {already_attached, Listener, Pid}}, State};
-
-handle_call({is_interpreted, Module}, _From, State) ->
-  {reply, is_interpreted(Module), State};
 
 handle_call(_Cmd, _From, #listener_state{proc = unattached} = State) ->
   {reply, {error, unattached}, State};
@@ -268,9 +255,6 @@ do_attach_pid(Pid) ->
   int:attached(Pid),
   edts_rte_app:debug("rte listener ~p attached to ~p~n", [self(), Pid]),
   ok.
-
-is_interpreted(Module) ->
-  lists:member(Module, int:interpreted()).
 
 %%------------------------------------------------------------------------------
 %% @doc
