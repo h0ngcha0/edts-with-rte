@@ -1,4 +1,4 @@
-;; rte related commands start
+(require 'edts-rte-mode)
 
 (defun edts-rte-run ()
   (interactive)
@@ -15,75 +15,75 @@
                      (string-equal (fun-arity-str fun arity) fun-buffer))
                 (edts-rte-run-with-args args-buffer))))))
 
-(defun edts-rte-run-with-args (arguments)
+(defun edts-rte-run-with-args (arguments &optional node module)
   "Run on function using rte_run"
   (interactive "sInput Arguments:")
   (if (server-running-p)
-      (let* ((module     (car (find-mfa-under-point)))
+      (let* ((module     (or module (ferl-get-module)))
+             (node       (or node (edts-node-name)))
              (function   (cadr (find-mfa-under-point)))
              (arity      (caddr (find-mfa-under-point)))
-             (body       (get-rte-run-body module function arguments)))
+             (args       (list (cons "module"   module)
+                               (cons "function" function)
+                               (cons "args"     arguments)))
+             (result     (edts-plugin-call node 'edts_rte 'rte_run args)))
         (ensure-args-saved arguments)
-        (edts-rte-log-info "Running %s:%s/%s" module function arity)
-        (rte-rest-post body))
+        (edts-rte-log-info "Running %s:%s/%s" module function arity))
     (edts-rte-log-error "Emacs server is not running")))
 
-(defun edts-rte-interpret-module ()
-  "Interpret the current module"
+(defun edts-rte-interpret-module (&optional node module)
+  "Interpret the module"
   (interactive)
-  (let* ((module     (ferl-get-module))
-         (body       (get-interpret-module-body module)))
+  (let* ((module (or module (ferl-get-module)))
+         (node   (or node (edts-node-name)))
+         (args   (list (cons "module" module))))
     (edts-rte-log-info "Interpreting module: %s" module)
-    (rte-rest-post body)))
+    (edts-plugin-call node 'edts_rte 'interpret_module args)))
 
-(defun edts-rte-uninterpret-module ()
-  "Un-interpret the current module"
+(defun edts-rte-uninterpret-module (&optional node module)
+  "Un-interpret the module"
   (interactive)
-  (let* ((module     (ferl-get-module))
-         (body       (get-uninterpret-module-body module)))
+  (let* ((module (or module (ferl-get-module)))
+         (node   (or node (edts-node-name)))
+         (args   (list (cons "module" module))))
     (edts-rte-log-info "Uninterpreting module: %s" module)
-    (rte-rest-post body)))
+    (edts-plugin-call node 'edts_rte 'uninterpret_module args)))
 
-(defun edts-rte-update-record-defs ()
+(defun edts-rte-update-record-defs (&optional node module)
   "Update the record definitions"
   (interactive)
-  (let* ((module     (ferl-get-module))
-         (body       (get-update-record-defs-body module)))
+  (let* ((module (or module (ferl-get-module)))
+         (node   (or node (edts-node-name)))
+         (args   (list (cons "module" module)))
+         (result (edts-plugin-call node 'edts_rte 'update_record_defs args)))
     (edts-rte-log-info "Update the record definitions: %s" module)
-    (rte-rest-post body)))
+    (null (edts-rte-log-info "%s" result))))
 
-(defun edts-rte-forget-record-defs (record-name)
+(defun edts-rte-forget-record-defs (record-name &optional node module)
   "Make RTE forget a particular record definition, if not specified
 then forget all"
   (interactive "sInput Arguments:")
-  (let* ((body (get-forget-record-defs-body record-name)))
+  (let* ((module (or module (ferl-get-module)))
+         (node   (or node (edts-node-name)))
+         (args   (list (cons "record" record-name)))
+         (result (edts-plugin-call node 'edts_rte 'forget_record_defs args)))
     (if (eq "" record-name)
         (edts-rte-log-info "Forget the record definitions of %s" record-name)
       (edts-rte-log-info "Forget all the record definitions"))
-    (rte-rest-post body)))
+    (null (edts-rte-log-info "%s" result))))
 
-(defun edts-rte-list-stored-record-names ()
+(defun edts-rte-list-stored-record-names (&optional node)
   "List the name of all the record that are stored by RTE"
   (interactive)
-  (let* ((body (get-list-record-names-body)))
+  (let* ((node   (or node (edts-node-name)))
+         (result (edts-plugin-call node 'edts_rte 'list_record_names nil)))
     (edts-rte-log-info "List all the record definitions...")
-    (rte-rest-post body)))
-
-(defun rte-rest-post (body)
-  (let* ((node     (edts-buffer-node-name))
-         (resource (list "plugins" "rte" node "cmd"))
-         (res      (edts-rest-post resource nil body)))
-      (if (equal (cdr (assoc 'state (cdr (assoc 'body res)))) "ok")
-          (null (edts-rte-log-info
-                 "%s" (cdr (assoc 'message (cdr (assoc 'body res))))))
-        (null (edts-rte-log-error
-               "%s" (cdr (assoc 'message (cdr (assoc 'body res)))))))))
+    (null (edts-rte-log-info "%s" result))))
 
 (defun param-buffer ()
   "Return the name of the parameter buffer for the current node"
   (let* ((node (edts-buffer-node-name)))
-    (concat "*" node "-" "params" "*")
-    ))
+    (concat "*" node "-" "params" "*")))
 
 (defun ensure-args-saved (args)
   "Ensure that the module function and arguments are saved in
@@ -121,32 +121,8 @@ then forget all"
 (defun trim-string (string)
   "Remove white spaces in beginning and ending of STRING.
 White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
-(replace-regexp-in-string "\\`[ \t\n]*" "" (replace-regexp-in-string "[ \t\n]*\\'" "" string)))
+  (replace-regexp-in-string "\\`[ \t\n]*" "" (replace-regexp-in-string "[ \t\n]*\\'" "" string)))
 
-(defun get-rte-run-body(module function args)
-  "Get the json body for rte-run rest request. String needs to be escaped properly."
-  (format "{\"cmd\": \"rte_run\",\"args\": [\"%s\",\"%s\", \"%s\"]}"
-          module function (replace-regexp-in-string "\\\"" "\\\\\"" args)))
-
-(defun get-interpret-module-body (module)
-  "Get the json body for the interpret-module rest request"
-  (format "{\"cmd\": \"interpret_module\",\"args\": [\"%s\"]}" module))
-
-(defun get-uninterpret-module-body (module)
-  "Get the json body for the uninterpret-module rest request"
-  (format "{\"cmd\": \"uninterpret_module\",\"args\": [\"%s\"]}" module))
-
-(defun get-update-record-defs-body (module)
-  "Get the json body for the update-record-defs rest request"
-  (format "{\"cmd\": \"update_record_defs\",\"args\": [\"%s\"]}" module))
-
-(defun get-list-record-names-body ()
-  "Get the json body for the list-record-defs rest request"
-  (format "{\"cmd\": \"list_record_names\",\"args\": []}"))
-
-(defun get-forget-record-defs-body (record-name)
-  "Get the json body for the forget-record-defs rest request"
-  (format "{\"cmd\": \"forget_record_defs\",\"args\": [\"%s\"]}" record-name))
 
 ;; find the mfa of the point
 (defun find-mfa-under-point ()
@@ -168,127 +144,8 @@ White space here is any of: space, tab, emacs newline (line feed, ASCII 10)."
       (erlang-mode)
       (edts-rte-mode))))
 
-(defun edts-rte-log-error (msg &rest args)
-  "Log MSG at error-level."
-  (apply #'edts-log-error (concat "RTE " msg) args))
-
 (defun edts-rte-log-info (msg &rest args)
   "Log MSG at info-level."
-  (apply #'edts-log-info (concat "RTE " msg) args))
-
-;; rte related commands end
-
-;;;###autoload
-(define-minor-mode edts-rte-mode
-  "Display the replaced value returned by edts-rte.
-When edts-rte replaces a variable with a value, a tuple in the format
-of {\"__edts-rte__\", VarName, Value} is returned. Value should be displayed
-and VarName should be displayed in the pop up window when the cursor is on
-top of it"
-  :init-value nil
-  :lighter "-EDTS-RTE"
-  (cond (edts-rte-mode
-         (highlight-rte-vars)
-         (replace-rte-vars)
-         (activate-advice)
-         (font-lock-fontify-buffer))
-        (t
-         (font-lock-remove-keywords
-          nil (rte-keywords))
-         (save-excursion
-           (goto-char (point-min))
-           (while (re-search-forward (rte-regex) nil t)
-             (funcall (switch-invisible) nil)))
-         (deactivate-advice))))
-
-(defun highlight-rte-vars ()
-  (interactive)
-  "Highlight the tuple {\"__edts-rte__\", VarName, Value} returned by edts rte"
-  (font-lock-add-keywords
-   nil (rte-keywords)))
-
-(defun replace-rte-vars ()
-  "Replace the tuple {\"__edts-rte__\", VarName, Value} returned by edts rte
-with Value"
-  (interactive)
-  (save-excursion
-      (goto-line (point-min))
-      (while (re-search-forward (rte-regex) nil t)
-        (funcall (switch-invisible) t))))
-
-(defun display-rte-var ()
-  "Display the variable name in the tuple {\"__edts-rte__\", VarName, Value}
-returned by edts rte"
-  (interactive)
-  (let* ((cur-point   (point))
-         (displayed-p nil))
-    (save-excursion
-      (goto-line (point-min))
-      (while (and (not displayed-p)
-                  (re-search-forward (rte-regex) nil t))
-        (if (and (>= cur-point (match-beginning 0))
-                 (<= cur-point (match-end 0)))
-            (progn (put-text-property (match-beginning 1) (match-end 1) 'invisible nil)
-                   (message (concat "Variable Name: "
-                                    (buffer-substring (match-beginning 1) (match-end 1))))
-                   (put-text-property (match-beginning 1) (match-end 1) 'invisible t)
-                   (setq displayed-p t))
-          (message ""))))))
-
-;; question mark means non-greedy
-(defun rte-regex ()
-  "Regex to match the return replaced vars from the edts-rte"
-  "\{b,\\(.+?\\),s,\\(.+?\\)\,e}"
-  )
-
-(defadvice forward-char (after forward-display-rte-var)
-  "Advice for forward-char for displaying the rte variable name"
-  (display-rte-var))
-
-(defadvice backward-char (after backward-display-rte-var)
-  "Advice for backward-char for displaying the rte variable name"
-  (display-rte-var))
-
-(defadvice next-line (after next-line-display-rte-var)
-  "Advice for next-line for displaying the rte variable name"
-  (display-rte-var))
-
-(defadvice previous-line (after previous-line-display-rte-var)
-  "Advice for previous for displaying the rte variable name"
-  (display-rte-var))
-
-(defun activate-advice ()
-  (interactive)
-  "Activate all the advices"
-  (mapcar (lambda (advice) (ad-activate advice)) (rte-advices)))
-
-(defun deactivate-advice ()
-  (interactive)
-  "Deactivate all the advices"
-  (mapcar (lambda (advice) (ad-deactivate advice)) (rte-advices)))
-
-(defun rte-advices ()
-  "All the advices defined in edts rte mode"
-  '(forward-char backward-char next-line previous-line))
-
-(defun switch-invisible ()
-  "Return a function to switch the invisible property for the part of the
-value returned by rte."
-  (lambda (flag)
-    (put-text-property (match-beginning 0) (match-beginning 2) 'invisible flag)
-    (put-text-property (match-end 2) (match-end 0) 'invisible flag)))
-
-(defun rte-keywords ()
-  "Keywords in edts-rte mode that needs to be added to font lock"
-  `((,(rte-regex) 0 'font-lock-warning-face prepend)
-    ("^\\(\\.+\\)" 0 'highlight prepend)))
-
-(add-hook 'edts-code-after-compile-hook 'edts-rte)
-
-(defun edts-rte (result)
-  "Execute the edts-rte-run function when there is no error in
-the file"
-  (when (not (eq result 'error))
-    (edts-rte-run)))
+  (apply #'edts-log-info (concat "RTE: " msg) args))
 
 (provide 'edts-rte)

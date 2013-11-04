@@ -74,33 +74,33 @@
   (setq truncate-partial-width-windows nil)
   (use-local-map edts-debug-mode-keymap))
 
+
+
 (defun edts-debug-mode-update-variable-bindings ()
   (let ((buf (get-buffer "EDTS Debug Variable Bindings")))
     (when buf
       (with-current-buffer buf
         (let* ((inhibit-read-only t)
-               (bindings (edts-debug-process-info edts-debug-node
-                                                  edts-debug-pid
-                                                  'bindings))
-               (var-alist (sort (copy-sequence bindings)
-                                #'(lambda (el1 el2) (string< (car el1)
-                                                             (car el2)))))
-               (col-pad 4)
                ;; Figure out indentation
+               (bound (edts-debug-get-bound-variables edts-debug-node
+                                                      edts-debug-pid))
                (max-var-len (apply #'max
                                    8 ;; The length of the header name
-                                   (loop for (var . binding) in var-alist
-                                         collect (length (symbol-name var)))))
-               (indent  (+ max-var-len col-pad))
+                                   (loop for v in bound collect (length v))))
+               (col-pad 4)
                (max-col (window-body-width (get-buffer-window buf)))
+               (indent  (+ max-var-len col-pad))
+               (bindings (edts-debug-get-bindings-pretty edts-debug-node
+                                                         edts-debug-pid
+                                                         indent
+                                                         max-col))
                entries)
           (erase-buffer)
-
-          (loop for (var . binding) in var-alist
-                for var-name = (propertize (symbol-name var)
-                                           'face 'font-lock-variable-name-face)
-                for binding-pp = (edts-pretty-print-term binding indent max-col)
-                do (push (list nil (vector var-name binding-pp)) entries))
+          (loop for (var . bind) in bindings
+                for var-name = (propertize var
+                                           'face
+                                           'font-lock-variable-name-face)
+                do (push (list nil (vector var-name bind)) entries))
           (setq tabulated-list-format
                 (vector
                  `("Variable" ,max-var-len 'string< :pad-right ,col-pad)
