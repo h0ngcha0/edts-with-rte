@@ -30,7 +30,6 @@
 -export([ is_module_interpreted/1
         , maybe_attach/1
         , step/0
-        , uninterpret_module/1
         ]).
 
 %% gen_server callbacks
@@ -85,15 +84,6 @@ maybe_attach(Pid) ->
 %%------------------------------------------------------------------------------
 is_module_interpreted(Module) ->
   gen_server:call(?SERVER, {is_interpreted, Module}).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Uninterpret Module.
-%% @end
--spec uninterpret_module(Module :: module()) -> ok.
-%%------------------------------------------------------------------------------
-uninterpret_module(Module) ->
-  gen_server:call(?SERVER, {uninterpret, Module}).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -152,16 +142,6 @@ handle_call( {attach, Pid}, _From
            , #listener_state{listener = Listener, proc = Pid} = State) ->
   edts_rte_app:debug("in hancle_call, already attach, Pid:~p~n", [Pid]),
   {reply, {error, {already_attached, Listener, Pid}}, State};
-
-handle_call({uninterpret, Module}, _From, State) ->
-  Reply = case is_interpreted(Module) of
-            true  ->
-              int:n(Module),
-              {ok, make_return_message(Module, " uninterpreted")};
-            false ->
-              {error, make_return_message(Module, " is not interpreted")}
-          end,
-  {reply, Reply, State#listener_state{interpretation = false}};
 
 handle_call({is_interpreted, Module}, _From, State) ->
   {reply, is_interpreted(Module), State};
@@ -291,9 +271,6 @@ do_attach_pid(Pid) ->
 
 is_interpreted(Module) ->
   lists:member(Module, int:interpreted()).
-
-make_return_message(Module, Msg) ->
-  string:concat(atom_to_list(Module), Msg).
 
 %%------------------------------------------------------------------------------
 %% @doc
