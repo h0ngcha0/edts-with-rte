@@ -63,11 +63,11 @@
                   , line           :: line()
                   }).
 
--record(rte_state, { prev_bindings         = []
-                   , exit_p                = false      :: boolean()
-                   , mfa_info_tree         = []         :: list()  %% FIXME type
-                   , proc                  = unattached :: unattached | pid()
-                   , result                = undefined  :: term()
+-record(rte_state, { prev_bindings = []
+                   , exit_p        = false      :: boolean()
+                   , mfa_info_tree = []         :: list()  %% FIXME type
+                   , proc          = unattached :: unattached | pid()
+                   , result        = undefined  :: term()
                    }).
 
 %%%_* Types ====================================================================
@@ -186,7 +186,7 @@ handle_call({rte_run, Module, Fun, Args}, _From, State) ->
   %% try to read the record from the current module.. right now this is the
   %% only record support
   Res = exec([ fun() -> interpret_current_module(Module) end
-             , fun() -> set_breakpoint_beg(Module, Fun, Arity) end
+             , fun() -> set_breakpoint_begin(Module, Fun, Arity) end
              , fun() -> run_mfa(Module, Fun, ArgsTerm) end]),
 
   case Res of
@@ -324,10 +324,11 @@ interpret_current_module(Module) ->
   edts_rte_int_listener:interpret_module(Module).
 
 %% @doc set the break point at the beginning of the function
-set_breakpoint_beg(Module, Function, Arity) ->
-  case edts_rte_int_listener:set_breakpoint(Module, Function, Arity) of
-    {ok, set, {Module, Function, Arity}} -> ok;
-    _                                    -> {error, "Unable to set breakpoint"}
+set_breakpoint_begin(Module, Function, Arity) ->
+  case int:break_in(Module, Function, Arity) of
+    ok    -> ok;
+    Error -> edts_rte_app:debug("set_breakpoint error:~p~n", [Error]),
+             {error, "Unable to set breakpoint"}
   end.
 
 %% @doc run mfa in a seperate process

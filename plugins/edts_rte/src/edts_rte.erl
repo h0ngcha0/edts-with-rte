@@ -23,7 +23,7 @@
 %%%_* Module declaration =======================================================
 -module(edts_rte).
 
--behaviour(edts_plugin).
+-behaviour(edts_plugins).
 
 %%%_* Exports =================================================================
 -export([ forget_record_defs/1

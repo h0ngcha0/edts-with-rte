@@ -30,7 +30,6 @@
 -export([ interpret_module/1
         , is_module_interpreted/1
         , maybe_attach/1
-        , set_breakpoint/3
         , step/0
         , uninterpret_module/1
         ]).
@@ -97,18 +96,6 @@ interpret_module(Module) ->
 %%------------------------------------------------------------------------------
 is_module_interpreted(Module) ->
   gen_server:call(?SERVER, {is_interpreted, Module}).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Toggles a breakpoint at Module:Line.
-%% @end
--spec set_breakpoint( Module :: module(), Fun :: function()
-                    , Arity :: non_neg_integer()) ->
-                        {error, function_not_found} | {ok, set, tuple()}.
-
-%%------------------------------------------------------------------------------
-set_breakpoint(Module, Fun, Arity) ->
-  gen_server:call(?SERVER, {set_breakpoint, Module, Fun, Arity}).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -181,14 +168,6 @@ handle_call({interpret, Module}, _From, State) ->
   %% Can not check if the module is already interpreted using is_interpreted/1
   %% because even if it returns true, breakpoint wont be hit.
   {reply, interpret(Module), State#listener_state{interpretation = true}};
-
-handle_call({set_breakpoint, Module, Fun, Arity}, _From, State) ->
-  Reply = case int:break_in(Module, Fun, Arity) of
-            ok    -> {ok, set, {Module, Fun, Arity}};
-            Error -> edts_rte_app:debug("set_breakpoint error:~p~n", [Error]),
-                     Error
-          end,
-  {reply, Reply, State};
 
 handle_call({uninterpret, Module}, _From, State) ->
   Reply = case is_interpreted(Module) of
