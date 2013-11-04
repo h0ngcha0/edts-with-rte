@@ -27,8 +27,7 @@
 %% server API
 -export([start/0, stop/0, start_link/0]).
 
--export([ interpret_module/1
-        , is_module_interpreted/1
+-export([ is_module_interpreted/1
         , maybe_attach/1
         , step/0
         , uninterpret_module/1
@@ -77,16 +76,6 @@ maybe_attach(Pid) ->
     {error, already_attached, AttPid} ->
       {already_attached, AttPid, Pid}
   end.
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Interpret the module. Return ok if the module is interpreted, otherwise
-%% return error message.
-%% @end
--spec interpret_module(Module :: module()) -> {ok, module()} | {error, atom()}.
-%%------------------------------------------------------------------------------
-interpret_module(Module) ->
-  gen_server:call(?SERVER, {interpret, Module}).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -163,11 +152,6 @@ handle_call( {attach, Pid}, _From
            , #listener_state{listener = Listener, proc = Pid} = State) ->
   edts_rte_app:debug("in hancle_call, already attach, Pid:~p~n", [Pid]),
   {reply, {error, {already_attached, Listener, Pid}}, State};
-
-handle_call({interpret, Module}, _From, State) ->
-  %% Can not check if the module is already interpreted using is_interpreted/1
-  %% because even if it returns true, breakpoint wont be hit.
-  {reply, interpret(Module), State#listener_state{interpretation = true}};
 
 handle_call({uninterpret, Module}, _From, State) ->
   Reply = case is_interpreted(Module) of
@@ -307,19 +291,6 @@ do_attach_pid(Pid) ->
 
 is_interpreted(Module) ->
   lists:member(Module, int:interpreted()).
-
-interpret(Module) ->
-  try
-    case int:interpretable(Module) of
-      true ->
-        {module, Module} = int:i(Module),
-        {ok, make_return_message(Module, " interpreted")};
-      _    ->
-        {error, make_return_message(Module, " can not be interpreted")}
-    end
-  catch
-    _:_ -> {error, make_return_message(Module, " can not be interpreted")}
-  end.
 
 make_return_message(Module, Msg) ->
   string:concat(atom_to_list(Module), Msg).

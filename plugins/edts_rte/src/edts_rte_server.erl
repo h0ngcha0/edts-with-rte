@@ -321,7 +321,7 @@ list_stored_record_names() ->
 %% @doc interpret the current module
 interpret_current_module(Module) ->
   edts_rte_app:debug("interpreting:~p~n", [Module]),
-  edts_rte_int_listener:interpret_module(Module).
+  edts_rte:interpret_module(Module).
 
 %% @doc set the break point at the beginning of the function
 set_breakpoint_begin(Module, Function, Arity) ->

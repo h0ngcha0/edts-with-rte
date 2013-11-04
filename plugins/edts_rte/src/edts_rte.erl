@@ -48,10 +48,16 @@ rte_run(Module, Func, Args) ->
   edts_rte_server:rte_run(Module, Func, Args).
 
 interpret_module(Module) ->
-  edts_rte_int_listener:interpret_module(Module).
+  case module_interpreted_p(Module) of
+    true  -> {ok, already_interpreted};
+    false -> do_interpret_module(Module, true)
+  end.
 
 uninterpret_module(Module) ->
-  edts_rte_int_listener:uninterpret_module(Module).
+  case module_interpreted_p(Module) of
+    true  -> do_interpret_module(Module, false);
+    false -> {ok, already_uninterpreted}
+  end.
 
 list_record_names() ->
   edts_rte_server:list_record_names().
@@ -87,6 +93,64 @@ spec(rte_run,               3) -> [ {module,    atom}
                                   ].
 
 %%%_* Internal =================================================================
+do_interpret_module(Module, true) ->
+  case module_interpretable_p(Module) of
+    false -> {error, uninterpretable};
+    true  ->
+      {module, Module} = int:i(Module),
+      true
+  end;
+do_interpret_module(Module, false) ->
+  ok = int:n(Module),
+  false.
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Return true if Module is interpretable, false otherwise
+%% @end
+-spec module_interpretable_p(module()) -> boolean().
+%%------------------------------------------------------------------------------
+module_interpretable_p(Module) ->
+  ensure_started(),
+  case int:interpretable(Module) of
+    true       -> true;
+    {error, _} -> false
+  end.
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Reports if Module is interpreted.
+%% @end
+-spec module_interpreted_p(Module :: module()) -> boolean().
+%%------------------------------------------------------------------------------
+module_interpreted_p(Module) ->
+  ensure_started(),
+  lists:member(Module, interpreted_modules()).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Return a list of all interpreted modules.
+%% @end
+-spec interpreted_modules() -> [module()].
+%%------------------------------------------------------------------------------
+interpreted_modules() ->
+  ensure_started(),
+  int:interpreted().
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Ensure that the debug-server is running
+%% @end
+-spec ensure_started() -> ok.
+%%------------------------------------------------------------------------------
+ensure_started() ->
+  %% TODO: ensure listener is up and running etc and get rid of the supervisor
+  %%       structure
+  case whereis(dbg_iserver) of
+    undefined -> dbg_iserver:start();
+    _         -> ok
+  end.
+
 %%%_* Unit tests ===============================================================
 
 %%%_* Emacs ====================================================================
